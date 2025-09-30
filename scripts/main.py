@@ -40,6 +40,45 @@ def main():
     # Read query alignment
     query_alignment = list(SeqIO.parse(args.alignment, "fasta"))
 
+    # Read metadata if provided
+    if args.metadata:
+        if not os.path.exists(args.metadata):
+            raise ValueError(f"Metadata file {args.metadata} does not exist.")
+        
+        # Read metadata
+        if args.metadata.endswith(".csv"):
+            metadata = pd.read_csv(args.metadata)
+        elif args.metadata.endswith(".tsv"):
+            metadata = pd.read_csv(args.metadata, sep="\t")
+        else:
+            raise ValueError("Please provide a valid metadata file (csv/tsv).")
+        
+        # Check if metadata_id_col and metadata_genotype_col (default: "Accession" & "Genotype") are in the metadata file
+        if args.metadata_id_col not in metadata.columns or args.metadata_genotype_col not in metadata.columns:
+            raise ValueError("Please provide --metadata_id_col and --metadata_genotype_col arguments or ensure that the metadata file contains 'Accession' and 'Genotype' columns.")
+        
+    # Read colors if provided
+    if args.colors:
+        if not os.path.exists(args.colors):
+            raise ValueError(f"Colors file {args.colors} does not exist.")
+        if args.colors.endswith(".csv"):
+            colors = pd.read_csv(args.colors, header=None)
+        elif args.colors.endswith(".tsv"):
+            colors = pd.read_csv(args.colors, sep="\t", header=None)
+        else:
+            raise ValueError("Please provide a valid colors file (csv/tsv).")
+        if colors.shape[1] != 2:
+            raise ValueError("Colors file must have exactly two columns: genotype and color.")
+        colors.columns = ["genotype", "color"]
+    else:
+        colors = None
+
+    # Check if output directories exist, if not create them
+    if not os.path.exists(args.outplots):
+        os.makedirs(args.outplots)
+    if args.outcsv and not os.path.exists(args.outcsv):
+        os.makedirs(args.outcsv)
+
     # Check if reference is a fasta file
     if args.reference.endswith(".fasta") or args.reference.endswith(".fa") or args.reference.endswith(".fas"):
         reference_alignment = list(SeqIO.parse(args.reference, "fasta"))
@@ -66,26 +105,29 @@ def main():
             # Calculate pairwise distances for each window
             print(f"    └── Calculating pairwise distances for each window")
             for step, aln in windows.items():
-                #window_results = calculate_pairwise_distances(alignment=aln, current_step=step, gaps=args.gaps)
-                window_results = calculate_pairwise_distances(alignment=aln, current_step=step, gaps=0)
+                window_results = calculate_pairwise_distances(alignment=aln, current_step=step, gaps=args.gaps)
                 final_results.extend(window_results)
 
             # Convert the list of results to a dataframe
             results_df = pd.DataFrame(final_results, columns=["seq1", "seq2", "step", "distance", "similarity", "proportion_valid"])
             
-            # Check if output directories exist, if not create them
-            if not os.path.exists(args.outplots):
-                os.makedirs(args.outplots)
-            if args.outcsv and not os.path.exists(args.outcsv):
-                os.makedirs(args.outcsv)
-            
             # Save the results as a CSV file if output directory is provided
             if args.outcsv:
                 results_df.to_csv(f"{args.outcsv}/{query_id}_similarity_results.csv", index=False)
             
+            # Assign colors to the results dataframe
+            print(f"    └── Assigning colors for plotting")
+            results_df = assign_colors(results_df, metadata=metadata, metadata_id_col=args.metadata_id_col, metadata_genotype_col=args.metadata_genotype_col, colors=colors)
+
+            # If metadata is provided, get the genotype of the query sequence
+            if args.metadata:
+                query_genotype = metadata.loc[metadata[args.metadata_id_col] == query_id, args.metadata_genotype_col].values[0]
+            else: 
+                query_genotype = None
+            
             # Plot the SimPlot
-            print(f"    └── Creating SimPlot for {query_id}")
-            plot_simplot(results_df, args.outplots, args.outformat, args.metadata, args.colors, args.metadata_id_col, args.metadata_genotype_col)
+            print(f"    └── Creating SimPlot")
+            plot_simplot(results_df, args.outplots, args.outformat, query_genotype, args.windowsize, args.stepsize)
 
             print(f"[INFO] Finished processing query sequence: {query_id}\n============================================================")
 
@@ -116,19 +158,23 @@ def main():
         # Convert the list of results to a dataframe
         results_df = pd.DataFrame(final_results, columns=["seq1", "seq2", "step", "distance", "similarity", "proportion_valid"])
         
-        # Check if output directories exist, if not create them
-        if not os.path.exists(args.outplots):
-            os.makedirs(args.outplots)
-        if args.outcsv and not os.path.exists(args.outcsv):
-            os.makedirs(args.outcsv)
-        
         # Save the results as a CSV file if output directory is provided
         if args.outcsv:
             results_df.to_csv(f"{args.outcsv}/{query_id}_similarity_results.csv", index=False)
+
+        # Assign colors to the results dataframe
+        print(f"    └── Assigning colors for plotting")
+        results_df = assign_colors(results_df, metadata=metadata, metadata_id_col=args.metadata_id_col, metadata_genotype_col=args.metadata_genotype_col, colors=colors)
         
+        # If metadata is provided, get the genotype of the query sequence
+        if args.metadata:
+            query_genotype = metadata.loc[metadata[args.metadata_id_col] == query_id, args.metadata_genotype_col].values[0]
+        else: 
+            query_genotype = None
+
         # Plot the SimPlot
-        print(f"    └── Creating SimPlot for {query_id}")
-        plot_simplot(results_df, args.outplots, args.outformat, args.metadata, args.colors, args.metadata_id_col, args.metadata_genotype_col)
+        print(f"    └── Creating SimPlot")
+        plot_simplot(results_df, args.outplots, args.outformat, query_genotype, args.windowsize, args.stepsize)
 
         print(f"[INFO] Finished processing query sequence: {query_id}\n============================================================")
 
@@ -227,82 +273,82 @@ def calculate_pairwise_distances(alignment, current_step, gaps):
     
     return results
 
-
-# Function to generate and save the SimPlots
-def plot_simplot(results_df, outdir, outformat, metadata=None, colors=None, metadata_id_col="Accession", metadata_genotype_col="Genotype"):
+def assign_colors(results_df, metadata=None, metadata_id_col=None, metadata_genotype_col=None, colors=None):
+    """
+    Assigns colors to results_df depending on metadata and/or colors mapping.
+    Handles four cases:
+      1. metadata + colors
+      2. metadata only
+      3. colors only (warns and ignores colors)
+      4. neither metadata nor colors
+    """
 
     default_colors = plt.colormaps["tab20"]
 
-    if metadata:
-        # Read metadata file
-        if metadata.endswith(".csv"):
-            meta_df = pd.read_csv(metadata)
-        elif metadata.endswith(".tsv"):
-            meta_df = pd.read_csv(metadata, sep="\t")
-        else:
-            raise ValueError("Please provide a valid metadata file (csv/tsv).")
-        
-        # Check if required columns are present in the metadata file
-        if metadata_id_col not in meta_df.columns:
-            raise ValueError(f"Metadata file does not contain a column named '{metadata_id_col}' (for sequence IDs).")
-        if metadata_genotype_col not in meta_df.columns:
-            raise ValueError(f"Metadata file does not contain a column named '{metadata_genotype_col}' (for genotype information).")
-        
+    # --- Case 1 & 2: Metadata provided ---
+    if metadata is not None:
         # Merge metadata with results dataframe
-        meta_df.rename(columns={metadata_id_col: "seq2", metadata_genotype_col: "genotype"}, inplace=True)
-        results_df = results_df.merge(meta_df[["seq2", "genotype"]], on="seq2", how="left")
+        metadata = metadata.rename(columns={metadata_id_col: "seq2", metadata_genotype_col: "genotype"})
+        results_df = results_df.merge(metadata[["seq2", "genotype"]], on="seq2", how="left")
 
-        # If color-genotype mapping is provided, add colors to the output plot; else use default colors for each genotype
-        if colors:
-            if colors.endswith(".csv"):
-                colors_df = pd.read_csv(colors, header=None)
-            elif colors.endswith(".tsv"):
-                colors_df = pd.read_csv(colors, sep="\t", header=None)
-            else:
-                raise ValueError("Please provide a valid colors file (csv/tsv).")
-        
-            # Check if colors file has two columns
-            if colors_df.shape[1] != 2:
-                raise ValueError("Colors file must have exactly two columns: genotype and color (hex code or color name).")
-            colors_df.columns = ["genotype", "color"]
+        # --- Case 1: Metadata + Colors ---
+        # Color by genotype using the provided color mapping
+        if colors is not None:
+            # Merge colors
+            results_df = results_df.merge(colors, on="genotype", how="left")
 
-            # Merge colors with results dataframe
-            results_df = results_df.merge(colors_df, on="genotype", how="left")
-
-            # Check for any genotypes without a color assigned
+            # Fill missing colors with defaults
             if results_df["color"].isnull().any():
-                missing_colors = results_df[results_df["color"].isnull()]["genotype"].unique()
-                missing_colors_str = ', '.join(missing_colors)
-                print(f"        └── The following genotypes do not have a color assigned: {missing_colors_str}. Assigning default colors.")
-                # Assign default colors to missing genotypes
-                unique_genotypes = results_df[results_df["color"].isnull()]["genotype"].unique()
-                for i, genotype in enumerate(unique_genotypes):
+                missing_genotypes = results_df.loc[results_df["color"].isnull(), "genotype"].unique()
+                print(f"        └── Missing colors for genotypes: {', '.join(missing_genotypes)}. Assigning defaults.")
+                for i, genotype in enumerate(missing_genotypes):
                     default_color = default_colors(i % default_colors.N)
                     results_df.loc[(results_df["genotype"] == genotype) & (results_df["color"].isnull()), "color"] = mpl.colors.to_hex(default_color)
+        
+        # --- Case 2: Metadata only ---
+        # Color by genotype using default colors
+        else:
+            print("        └── No colors file provided. Using default colors for genotypes.")
+            unique_genotypes = results_df["genotype"].unique()
+            for i, genotype in enumerate(unique_genotypes):
+                default_color = default_colors(i % default_colors.N)
+                results_df.loc[results_df["genotype"] == genotype, "color"] = mpl.colors.to_hex(default_color)
 
-    # If neither metadata nor colors are provided, use default colors for each reference sequence
-    else:
+    # --- Case 3: Colors only (warning, ignored) ---
+    # Color by reference sequence using default colors
+    elif metadata is None and colors is not None:
+        print("        └── Colors file provided but no metadata file. Provided colors will be ignored and default colors used (no genotype info).")
         reference_seqs = results_df["seq2"].unique()
         for i, seq in enumerate(reference_seqs):
             default_color = default_colors(i % default_colors.N)
             results_df.loc[results_df["seq2"] == seq, "color"] = mpl.colors.to_hex(default_color)
 
+    # --- Case 4: Neither metadata nor colors ---
+    # Color by reference sequence using default colors
+    else:
+        print("        └── No metadata or colors file provided. Using default colors (no genotype info).")
+        reference_seqs = results_df["seq2"].unique()
+        for i, seq in enumerate(reference_seqs):
+            default_color = default_colors(i % default_colors.N)
+            results_df.loc[results_df["seq2"] == seq, "color"] = mpl.colors.to_hex(default_color)
+
+    return results_df
+
+
+# Function to generate and save the SimPlots
+def plot_simplot(results_df, outdir, outformat, query_genotype=None, windowsize=None, stepsize=None):
 
     # Make the similarity plot
     fig, ax = plt.subplots(figsize=(18, 5))
     
     # Get IDs of reference sequences (plotting one line for each)
     reference_seqs = results_df["seq2"].unique()
-    
-    # Get ID of query sequence
-    query_seq = results_df["seq1"].unique()[0]
-    if metadata:   # If metadata is available, add genotype information to the query sequence
-        query_genotype = meta_df.loc[meta_df["seq2"] == query_seq, "genotype"].values[0]
-        if pd.isna(query_genotype):
-            query_seq = query_seq
-        else:
-            query_seq = f"{query_seq} ({query_genotype})"
 
+    # Get the query sequence ID and genotype (if available)
+    query_seq = results_df["seq1"].values[0]
+    if query_genotype:
+        query_seq = f"{query_seq} ({query_genotype})"
+    
     # Keep track of how many times each color has been used
     color_counts = {}
     line_styles = ['-', '--', '-.', ':'] # If the same color is used multiple times, use different line styles
@@ -335,6 +381,11 @@ def plot_simplot(results_df, outdir, outformat, metadata=None, colors=None, meta
         borderaxespad=0,                # Space between the legend and the axes
         frameon=False                   # Remove the frame for a cleaner look
     )
+
+    # Plot parameter choices in the bottom left corner of the plot (window size, step size)
+    if windowsize and stepsize:
+        ax.text(0.01, -0.15, f"Window size: {windowsize} | Step size: {stepsize}", transform=ax.transAxes, fontsize=12, va="top", ha="left")
+
     
     # Set fontsize of tick labels
     ax.tick_params(axis="both", which="major", labelsize=16)
