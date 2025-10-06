@@ -19,10 +19,10 @@ plt.rcParams["font.family"] = "Arial"
 def get_args():
     parser = argparse.ArgumentParser(description="Similarity plot generator v1.0.0")
     parser.add_argument("-q", "--alignment", required=True, help="Path to input query alignment (fasta).")
-    parser.add_argument("-r", "--reference", required=True, help="Path to input reference alignment (fasta, must be same length as query alignment) -OR- ID/Accession of query sequence in the query alignment.")
+    parser.add_argument("-r", "--reference", required=True, help="Path to input reference alignment (fasta, must be same nucleotide length as query alignment) -OR- ID/Accession of query sequence in the query alignment.")
     parser.add_argument("-m", "--metadata", default=None, help="Path to input metadata file (tsv/csv). If provided, genotype information will be added to the output plot.")
     parser.add_argument("-mi", "--metadata_id_col", default="Accession", help="Column name in metadata file that contains sequence IDs (default: Accession).")
-    parser.add_argument("-mg", "--metadata_genotype_col", default="Genotype", help="Column name in metadata file that contains genotype information (default: Genotype).")
+    parser.add_argument("-mg", "--metadata_genotype_col", default="Genotype", help="Column name in metadata file that contains genotype/grouping information (default: Genotype).")
     parser.add_argument("-c", "--colors", default=None, help="Path to input colors file (tsv/csv). If provided, colors will be used for each genotype in the output plot.")
     parser.add_argument("-w", "--windowsize", type=int, default=100, help="Window size for similarity plots (default: 100).")
     parser.add_argument("-s", "--stepsize", type=int, default=50, help="Step size for similarity plots (default: 50).")
