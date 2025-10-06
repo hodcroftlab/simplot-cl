@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 ### Similarity plot generator v1.0.0
 
 # Import required packages
@@ -6,6 +8,7 @@ import numpy as np
 from Bio import SeqIO
 #from Bio.Seq import Seq
 import argparse 
+import argcomplete
 import os
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -18,11 +21,13 @@ plt.rcParams["font.family"] = "Arial"
 # Define arguments
 def get_args():
     parser = argparse.ArgumentParser(description="Similarity plot generator v1.0.0")
-    parser.add_argument("-q", "--alignment", required=True, help="Path to input query alignment (fasta).")
-    parser.add_argument("-r", "--reference", required=True, help="Path to input reference alignment (fasta, must be same nucleotide length as query alignment) -OR- ID/Accession of query sequence in the query alignment.")
+    parser.add_argument("-a", "--alignment", required=True, help="Path to input query alignment (fasta).")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("-q", "--query-id", help="ID/Accession of query sequence in the alignment.")
+    group.add_argument("-r", "--reference-alignment", help="Path to input reference alignment (fasta, must be same nucleotide length as the query alignment).")
     parser.add_argument("-m", "--metadata", default=None, help="Path to input metadata file (tsv/csv). If provided, genotype information will be added to the output plot.")
-    parser.add_argument("-mi", "--metadata_id_col", default="Accession", help="Column name in metadata file that contains sequence IDs (default: Accession).")
-    parser.add_argument("-mg", "--metadata_genotype_col", default="Genotype", help="Column name in metadata file that contains genotype/grouping information (default: Genotype).")
+    parser.add_argument("-mi", "--metadata-id-col", default="Accession", help="Column name in metadata file that contains sequence IDs (default: Accession).")
+    parser.add_argument("-mg", "--metadata-genotype-col", default="Genotype", help="Column name in metadata file that contains genotype/grouping information (default: Genotype).")
     parser.add_argument("-c", "--colors", default=None, help="Path to input colors file (tsv/csv). If provided, colors will be used for each genotype in the output plot.")
     parser.add_argument("-w", "--windowsize", type=int, default=100, help="Window size for similarity plots (default: 100).")
     parser.add_argument("-s", "--stepsize", type=int, default=50, help="Step size for similarity plots (default: 50).")
@@ -30,8 +35,11 @@ def get_args():
     parser.add_argument("-f", "--outformat", default="png", help="Output file format for the plots (png/jpg/pdf/svg, default: png).")
     parser.add_argument("-p", "--outplots", default="simplots", help="Output directory for similarity plots (default: simplots).")
     parser.add_argument("-o", "--outcsv", default=None, help="Output directory for tables with similarity results for each query; if not provided, tables will not be saved.")
+    
+    # Register autocompletion
+    argcomplete.autocomplete(parser)
+    
     return parser.parse_args()
-
 
 # Main function
 def main():
@@ -79,9 +87,10 @@ def main():
     if args.outcsv and not os.path.exists(args.outcsv):
         os.makedirs(args.outcsv)
 
-    # Check if reference is a fasta file
-    if args.reference.endswith(".fasta") or args.reference.endswith(".fa") or args.reference.endswith(".fas"):
-        reference_alignment = list(SeqIO.parse(args.reference, "fasta"))
+    # Check if reference alignment was provided
+    if args.reference_alignment:
+        print(f"[INFO] Using reference alignment: {args.reference_alignment}")
+        reference_alignment = list(SeqIO.parse(args.reference_alignment, "fasta"))
 
         # Check if query and reference alignments have the same length
         if len(query_alignment[0].seq) != len(reference_alignment[0].seq):
@@ -131,13 +140,12 @@ def main():
 
             print(f"[INFO] Finished processing query sequence: {query_id}\n============================================================")
 
-    else:
-        # If reference is not a file, assume it is the ID/Accession of the query sequence
-        query_id = args.reference
+    elif args.query_id:
+        query_id = args.query_id
         print(f"[INFO] Processing query sequence: {query_id}")
         query_record = [record for record in query_alignment if record.id == query_id]
         if len(query_record) == 0:
-            raise ValueError(f"Reference ID {query_id} not found in query alignment. Please provide a valid reference alignment file (.fasta/.fa/.fas) or a valid query ID.")
+            raise ValueError(f"Reference ID {query_id} not found in query alignment. Please provide a valid query ID that is present in the alignment.")
         
         # Reorder the alignment to position the query sequence as the first sequence
         final_alignment = query_record + [record for record in query_alignment if record.id != query_id]
@@ -177,6 +185,9 @@ def main():
         plot_simplot(results_df, args.outplots, args.outformat, query_genotype, args.windowsize, args.stepsize)
 
         print(f"[INFO] Finished processing query sequence: {query_id}\n============================================================")
+
+    else:
+        raise ValueError("Please provide either a reference alignment file (--reference-alignment) or a query ID (--query-id).")
 
 
 # Function to split the alignment into windows of the given window size and step size
