@@ -28,6 +28,7 @@ def get_args():
     parser.add_argument("-m", "--metadata", default=None, help="Path to input metadata file (tsv/csv). If provided, genotype information will be added to the output plot.")
     parser.add_argument("-mi", "--metadata-id-col", default="Accession", help="Column name in metadata file that contains sequence IDs (default: Accession).")
     parser.add_argument("-mg", "--metadata-genotype-col", default="Genotype", help="Column name in metadata file that contains genotype/grouping information (default: Genotype).")
+    parser.add_argument("-mm", "--metadata-mode", choices=["reference", "query", "both"], default="both", help="Which sequences the metadata applies to (default: both):\nOptions: 'reference' = metadata applies only to reference sequences\n'query' = metadata applies only to query sequences\n'both' = metadata includes both query and reference sequences.")
     parser.add_argument("-c", "--colors", default=None, help="Path to input colors file (tsv/csv). If provided, colors will be used for each genotype in the output plot.")
     parser.add_argument("-w", "--windowsize", type=int, default=100, help="Window size for similarity plots (default: 100).")
     parser.add_argument("-s", "--stepsize", type=int, default=50, help="Step size for similarity plots (default: 50).")
@@ -65,6 +66,15 @@ def main():
         if args.metadata_id_col not in metadata.columns or args.metadata_genotype_col not in metadata.columns:
             raise ValueError("Please provide --metadata_id_col and --metadata_genotype_col arguments or ensure that the metadata file contains 'Accession' and 'Genotype' columns.")
         
+        # Check if metadata covers all query sequences
+        if args.metadata_mode in ["query", "both"]:
+            query_ids = [record.id for record in query_alignment]
+            missing_queries = [qid for qid in query_ids if qid not in metadata[args.metadata_id_col].values]
+            if len(missing_queries) > 0:
+                print(f"[WARN] The following query IDs are missing from the metadata file: {', '.join(missing_queries)}")
+    else:
+        metadata = None
+        
     # Read colors if provided
     if args.colors:
         if not os.path.exists(args.colors):
@@ -96,6 +106,14 @@ def main():
         if len(query_alignment[0].seq) != len(reference_alignment[0].seq):
             raise ValueError("Query and reference alignments must be of the same length.")
         
+        # Check if metadata covers all reference sequences
+        if metadata is not None:
+            if args.metadata_mode in ["reference", "both"]:
+                ref_ids = [record.id for record in reference_alignment]
+                missing_refs = [rid for rid in ref_ids if rid not in metadata[args.metadata_id_col].values]
+                if len(missing_refs) > 0:
+                    print(f"[WARN] The following reference IDs are missing from the metadata file: {', '.join(missing_refs)}")
+        
         # Loop through each sequence in the query alignment
         for query_record in query_alignment:
             query_id = query_record.id
@@ -126,14 +144,19 @@ def main():
             
             # Assign colors to the results dataframe
             print(f"    └── Assigning colors for plotting")
-            results_df = assign_colors(results_df, metadata=metadata, metadata_id_col=args.metadata_id_col, metadata_genotype_col=args.metadata_genotype_col, colors=colors)
+            results_df = assign_colors(results_df, metadata=metadata, metadata_id_col=args.metadata_id_col, metadata_genotype_col=args.metadata_genotype_col, colors=colors, metadata_mode=args.metadata_mode)
 
             # If metadata is provided, get the genotype of the query sequence
-            if args.metadata:
-                query_genotype = metadata.loc[metadata[args.metadata_id_col] == query_id, args.metadata_genotype_col].values[0]
-            else: 
-                query_genotype = None
-            
+            query_genotype = None
+            if args.metadata and args.metadata_mode in ["query", "both"]:
+                q_match = metadata.loc[metadata[args.metadata_id_col] == query_id]
+                if not q_match.empty:
+                    query_genotype = q_match[args.metadata_genotype_col].values[0]
+                else:
+                    print(f"[WARN] Query ID {query_id} not found in metadata (mode={args.metadata_mode}). Proceeding without query genotype label.")
+            elif args.metadata and args.metadata_mode == "reference":
+                print(f"    └── Metadata mode 'reference': skipping query genotype lookup.")
+                
             # Plot the SimPlot
             print(f"    └── Creating SimPlot")
             plot_simplot(results_df, args.outplots, args.outformat, query_genotype, args.windowsize, args.stepsize)
@@ -172,13 +195,19 @@ def main():
 
         # Assign colors to the results dataframe
         print(f"    └── Assigning colors for plotting")
-        results_df = assign_colors(results_df, metadata=metadata, metadata_id_col=args.metadata_id_col, metadata_genotype_col=args.metadata_genotype_col, colors=colors)
+        results_df = assign_colors(results_df, metadata=metadata, metadata_id_col=args.metadata_id_col, metadata_genotype_col=args.metadata_genotype_col, colors=colors, metadata_mode=args.metadata_mode)
         
         # If metadata is provided, get the genotype of the query sequence
-        if args.metadata:
-            query_genotype = metadata.loc[metadata[args.metadata_id_col] == query_id, args.metadata_genotype_col].values[0]
-        else: 
-            query_genotype = None
+        query_genotype = None
+        if args.metadata and args.metadata_mode in ["query", "both"]:
+            q_match = metadata.loc[metadata[args.metadata_id_col] == query_id]
+            if not q_match.empty:
+                query_genotype = q_match[args.metadata_genotype_col].values[0]
+            else:
+                print(f"[WARN] Query ID {query_id} not found in metadata (mode={args.metadata_mode}). Proceeding without query genotype label.")
+        elif args.metadata and args.metadata_mode == "reference":
+            print(f"    └── Metadata mode 'reference': skipping query genotype lookup.")
+
 
         # Plot the SimPlot
         print(f"    └── Creating SimPlot")
@@ -284,64 +313,130 @@ def calculate_pairwise_distances(alignment, current_step, gaps):
     
     return results
 
-def assign_colors(results_df, metadata=None, metadata_id_col=None, metadata_genotype_col=None, colors=None):
+def assign_colors(results_df, metadata=None, metadata_id_col=None, metadata_genotype_col=None, colors=None, metadata_mode="both"):
     """
-    Assigns colors to results_df depending on metadata and/or colors mapping.
-    Handles four cases:
-      1. metadata + colors
-      2. metadata only
-      3. colors only (warns and ignores colors)
-      4. neither metadata nor colors
+    Assigns colors to results_df depending on metadata and/or colors mapping,
+    with support for metadata_mode = reference | query | both.
+
+    Handle five cases:
+      1. metadata_mode includes reference, colors provided → color by genotype
+      2. metadata_mode includes reference, no colors → default colors by genotype
+      3. metadata_mode excludes reference → skip genotype merge entirely, default color by sequence ID
+      4. colors only → warn and default color by sequence ID
+      5. no metadata, no colors → default color by sequence ID
     """
 
     default_colors = plt.colormaps["tab20"]
 
-    # --- Case 1 & 2: Metadata provided ---
-    if metadata is not None:
-        # Merge metadata with results dataframe
-        metadata = metadata.rename(columns={metadata_id_col: "seq2", metadata_genotype_col: "genotype"})
-        results_df = results_df.merge(metadata[["seq2", "genotype"]], on="seq2", how="left")
+    # --- CASE 1 & 2: metadata present and includes reference sequences ---
+    if metadata is not None and metadata_mode in ["reference", "both"]:
+        # Merge metadata to get genotypes
+        md = metadata.rename(
+            columns={metadata_id_col: "seq2", metadata_genotype_col: "genotype"}
+        )
+        results_df = results_df.merge(md[["seq2", "genotype"]], on="seq2", how="left")
 
-        # --- Case 1: Metadata + Colors ---
-        # Color by genotype using the provided color mapping
-        if colors is not None:
-            # Merge colors
+        # --- CASE 1: colors + metadata ---
+        if colors is not None and "genotype" in results_df.columns:
             results_df = results_df.merge(colors, on="genotype", how="left")
 
-            # Fill missing colors with defaults
+            # Fill in missing colors if any genotype not in color map
             if results_df["color"].isnull().any():
-                missing_genotypes = results_df.loc[results_df["color"].isnull(), "genotype"].unique()
-                print(f"        └── Missing colors for genotypes: {', '.join(missing_genotypes)}. Assigning defaults.")
-                for i, genotype in enumerate(missing_genotypes):
+                # Drop NaNs and ensure all genotypes are strings before printing
+                missing = (
+                    results_df.loc[results_df["color"].isnull(), "genotype"]
+                    .dropna()
+                    .unique()
+                )
+                missing_str = [str(x) for x in missing]
+
+                if len(missing_str) > 0:
+                    print(f"        └── Missing colors for genotypes: {', '.join(missing_str)}. Assigning default palette.")
+
+                for i, g in enumerate(missing):
                     default_color = default_colors(i % default_colors.N)
-                    results_df.loc[(results_df["genotype"] == genotype) & (results_df["color"].isnull()), "color"] = mpl.colors.to_hex(default_color)
-        
-        # --- Case 2: Metadata only ---
-        # Color by genotype using default colors
-        else:
+                    results_df.loc[
+                        (results_df["genotype"] == g) & (results_df["color"].isnull()), "color",] = mpl.colors.to_hex(default_color)
+                    
+            # If any colors are missing due to missing genotype metadata, assign default colors by sequence
+            if results_df["genotype"].isnull().any():
+                # Find reference sequences with missing genotype
+                missing_refs = results_df.loc[results_df["genotype"].isnull(), "seq2"].unique()
+                missing_refs_str = [str(x) for x in missing_refs]
+                if len(missing_refs_str) > 0:
+                    print(f"        └── Missing genotypes for reference sequences: {', '.join(missing_refs_str)}. Assigning default palette by sequence.")
+                for i, seq in enumerate(missing_refs):
+                    default_color = default_colors(i % default_colors.N)
+                    results_df.loc[
+                        (results_df["seq2"] == seq) & (results_df["genotype"].isnull()), "color",] = mpl.colors.to_hex(default_color)
+
+
+        # --- CASE 2: metadata only (no colors file) ---
+        elif "genotype" in results_df.columns:
             print("        └── No colors file provided. Using default colors for genotypes.")
-            unique_genotypes = results_df["genotype"].unique()
-            for i, genotype in enumerate(unique_genotypes):
+            unique_gts = results_df["genotype"].dropna().unique()
+            for i, g in enumerate(unique_gts):
                 default_color = default_colors(i % default_colors.N)
-                results_df.loc[results_df["genotype"] == genotype, "color"] = mpl.colors.to_hex(default_color)
+                results_df.loc[
+                    results_df["genotype"] == g, "color"
+                ] = mpl.colors.to_hex(default_color)
 
-    # --- Case 3: Colors only (warning, ignored) ---
-    # Color by reference sequence using default colors
+            # If any colors are missing due to missing genotype metadata, assign default colors by sequence
+            if results_df["genotype"].isnull().any():
+                # Find reference sequences with missing genotype
+                missing_refs = results_df.loc[results_df["genotype"].isnull(), "seq2"].unique()
+                missing_refs_str = [str(x) for x in missing_refs]
+                if len(missing_refs_str) > 0:
+                    print(f"        └── Missing genotypes for reference sequences: {', '.join(missing_refs_str)}. Assigning default palette by sequence.")
+                for i, seq in enumerate(missing_refs):
+                    default_color = default_colors(i % default_colors.N)
+                    results_df.loc[
+                        (results_df["seq2"] == seq) & (results_df["genotype"].isnull()), "color",] = mpl.colors.to_hex(default_color)
+
+        else:
+            print("        └── Metadata merge produced no genotype column. Using default colors by sequence.")
+            reference_seqs = results_df["seq2"].unique()
+            for i, seq in enumerate(reference_seqs):
+                default_color = default_colors(i % default_colors.N)
+                results_df.loc[
+                    results_df["seq2"] == seq, "color"
+                ] = mpl.colors.to_hex(default_color)
+
+    # --- CASE 3: metadata present but mode excludes references ---
+    elif metadata is not None and metadata_mode == "query":
+        print(
+            "        └── Metadata mode 'query': skipping genotype merge for reference sequences. Using default colors."
+        )
+        reference_seqs = results_df["seq2"].unique()
+        for i, seq in enumerate(reference_seqs):
+            default_color = default_colors(i % default_colors.N)
+            results_df.loc[
+                results_df["seq2"] == seq, "color"
+            ] = mpl.colors.to_hex(default_color)
+
+    # --- CASE 4: colors file only ---
     elif metadata is None and colors is not None:
-        print("        └── Colors file provided but no metadata file. Provided colors will be ignored and default colors used (no genotype info).")
+        print(
+            "        └── Colors file provided but no metadata file. Using default colors by sequence."
+        )
         reference_seqs = results_df["seq2"].unique()
         for i, seq in enumerate(reference_seqs):
             default_color = default_colors(i % default_colors.N)
-            results_df.loc[results_df["seq2"] == seq, "color"] = mpl.colors.to_hex(default_color)
+            results_df.loc[
+                results_df["seq2"] == seq, "color"
+            ] = mpl.colors.to_hex(default_color)
 
-    # --- Case 4: Neither metadata nor colors ---
-    # Color by reference sequence using default colors
+    # --- CASE 5: neither metadata nor colors ---
     else:
-        print("        └── No metadata or colors file provided. Using default colors (no genotype info).")
+        print(
+            "        └── No metadata or colors provided. Using default colors by sequence."
+        )
         reference_seqs = results_df["seq2"].unique()
         for i, seq in enumerate(reference_seqs):
             default_color = default_colors(i % default_colors.N)
-            results_df.loc[results_df["seq2"] == seq, "color"] = mpl.colors.to_hex(default_color)
+            results_df.loc[
+                results_df["seq2"] == seq, "color"
+            ] = mpl.colors.to_hex(default_color)
 
     return results_df
 
@@ -402,7 +497,7 @@ def plot_simplot(results_df, outdir, outformat, query_genotype=None, windowsize=
     ax.tick_params(axis="both", which="major", labelsize=16)
     y_min = results_df["similarity"].min() - 0.02
     ax.set_ylim(y_min, 1.02)
-    query_seq = query_seq.replace(" ", "_").replace("(", "").replace(")", "")
+    query_seq = query_seq.replace(" ", "_").replace("(", "").replace(")", "").replace("-", "")
     plt.tight_layout()
     plt.savefig(f"{outdir}/simplot_{query_seq}.{outformat}")
     ax.clear()
