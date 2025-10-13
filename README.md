@@ -11,8 +11,8 @@ Given one or more aligned viral genome sequences, the script:
 1. Splits the alignment into overlapping windows of a chosen size.
 2. Calculates the pairwise similarity between a query and other sequences in each window.
 3. Produces:
-    - a CSV table with similarity values, and
-    - a plot showing how similarity changes along the genome.
+    a) a plot showing how similarity changes along the genome, and
+    b) a CSV table with similarity values (optional).
 
 ![example simplot](simplots/simplot_OP137282.1_PV3.png)
 
@@ -41,11 +41,11 @@ argcomplete
 
 The script can run in two main ways:
 
-### 1️⃣ Using one alignment file (specify a query ID)
+1️⃣ **Using one alignment file (specify a query ID)**
 
 ```python main.py -a alignment.fasta -q Query1 ```
 
-### 2️⃣ Using separate query and reference alignments
+2️⃣ **Using separate query and reference alignments**
 
 ```python main.py -a queries.fasta -r references.fasta ```
 
@@ -82,20 +82,19 @@ Plots show:
 - Similarity (1 − p-distance) on the y-axis
 - One line per reference sequence (colored by genotype if available)
 
-
 ## Examples
 
-### Simple run
+**Simple run**
 
 Compare one query to all others in the same alignment:
 
 ```python main.py -a demo_data/query_alignment.fasta -q OP137282.1 -w 200 -s 50 -p plots -o tables```
 
-### With a separate reference alignment
+**With a separate reference alignment**
 
 ```python main.py -a demo_data/query_alignment.fasta -r demo_data/reference_alignment.fasta -w 300 -s 100 -p plots```
 
-### With metadata and custom colors
+**With metadata and custom colors**
 
 ```
 python main.py \
@@ -122,8 +121,8 @@ C	#2ca02c
 
 ## References
 
-Original SimPlot software: https://sray.med.som.jhmi.edu/SCRoftware/SimPlot/
+Original SimPlot software: https://sray.med.som.jhmi.edu/SCRoftware/SimPlot/ <br>
 Lole KS, Bollinger RC, Paranjape RS, Gadkari D, Kulkarni SS, Novak NG, Ingersoll R, Sheppard HW, Ray SC. Full-length human immunodeficiency virus type 1 genomes from subtype C-infected seroconverters in India, with evidence of intersubtype recombination. J Virol. 1999 Jan;73(1):152-60.
 
-SimPlot++ (modern GUI version): https://github.com/Stephane-S/Simplot_PlusPlus
+SimPlot++ (modern GUI version): https://github.com/Stephane-S/Simplot_PlusPlus <br>
 Stéphane Samson, Étienne Lord, Vladimir Makarenkov, SimPlot++: a Python application for representing sequence similarity and detecting recombination, Bioinformatics, Volume 38, Issue 11, June 2022, Pages 3118–3120, https://doi.org/10.1093/bioinformatics/btac287
