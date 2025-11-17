@@ -12,6 +12,7 @@ import argcomplete
 import os
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import subprocess
 mpl.use("agg") # Use the Agg backend to save plots without displaying them
 
 # Set font to Arial
@@ -21,10 +22,11 @@ plt.rcParams["font.family"] = "Arial"
 # Define arguments
 def get_args():
     parser = argparse.ArgumentParser(description="Similarity plot generator v1.0.0")
-    parser.add_argument("-a", "--alignment", required=True, help="Path to input query alignment (fasta).")
+    parser.add_argument("-a", "--sequences", required=True, help="Path to input query sequences (fasta).")
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("-q", "--query-id", help="ID/Accession of query sequence in the alignment.")
-    group.add_argument("-r", "--reference-alignment", help="Path to input reference alignment (fasta, must be same nucleotide length as the query alignment).")
+    group.add_argument("-q", "--query-id", help="ID/Accession of query sequence in the query fasta.")
+    group.add_argument("-r", "--reference-sequences", help="Path to input reference sequences (fasta; if aligned, must have same nucleotide length as query sequences).")
+    parser.add_argument("-n", "--no-align", action="store_true", help="If set, skip MAFFT alignment before similarity plotting.")
     parser.add_argument("-m", "--metadata", default=None, help="Path to input metadata file (tsv/csv). If provided, genotype information will be added to the output plot.")
     parser.add_argument("-mi", "--metadata-id-col", default="Accession", help="Column name in metadata file that contains sequence IDs (default: Accession).")
     parser.add_argument("-mg", "--metadata-genotype-col", default="Genotype", help="Column name in metadata file that contains genotype/grouping information (default: Genotype).")
@@ -33,6 +35,7 @@ def get_args():
     parser.add_argument("-w", "--windowsize", type=int, default=100, help="Window size for similarity plots (default: 100).")
     parser.add_argument("-s", "--stepsize", type=int, default=50, help="Step size for similarity plots (default: 50).")
     parser.add_argument("-g", "--gaps", type=int, default=0, help="How to deal with gaps (default: 0):\n 0 = skip position if one or both sequences have a gap\n 1 = mismatch if one has a gap, match if both have a gap\n 2 = mismatch if one has a gap, skip position if both have a gap.")
+    parser.add_argument("-t", "--threads", type=int, default=1, help="Number of threads to use for MAFFT alignment (if --align is set; default: 1).")
     parser.add_argument("-f", "--outformat", default="png", help="Output file format for the plots (png/jpg/pdf/svg, default: png).")
     parser.add_argument("-p", "--outplots", default="simplots", help="Output directory for similarity plots (default: simplots).")
     parser.add_argument("-o", "--outcsv", default=None, help="Output directory for tables with similarity results for each query; if not provided, tables will not be saved.")
@@ -46,8 +49,8 @@ def get_args():
 def main():
     args = get_args()
 
-    # Read query alignment
-    query_alignment = list(SeqIO.parse(args.alignment, "fasta"))
+    # Read query sequences
+    query_sequences = list(SeqIO.parse(args.sequences, "fasta"))
 
     # Read metadata if provided
     if args.metadata:
@@ -68,7 +71,7 @@ def main():
         
         # Check if metadata covers all query sequences
         if args.metadata_mode in ["query", "both"]:
-            query_ids = [record.id for record in query_alignment]
+            query_ids = [record.id for record in query_sequences]
             missing_queries = [qid for qid in query_ids if qid not in metadata[args.metadata_id_col].values]
             if len(missing_queries) > 0:
                 print(f"[WARN] The following query IDs are missing from the metadata file: {', '.join(missing_queries)}")
@@ -97,30 +100,60 @@ def main():
     if args.outcsv and not os.path.exists(args.outcsv):
         os.makedirs(args.outcsv)
 
-    # Check if reference alignment was provided
-    if args.reference_alignment:
-        print(f"[INFO] Using reference alignment: {args.reference_alignment}")
-        reference_alignment = list(SeqIO.parse(args.reference_alignment, "fasta"))
+    # Check if reference sequences were provided
+    if args.reference_sequences:
+        
+        print(f"[INFO] Using reference sequences: {args.reference_sequences}")
+        reference_sequences = list(SeqIO.parse(args.reference_sequences, "fasta"))
 
-        # Check if query and reference alignments have the same length
-        if len(query_alignment[0].seq) != len(reference_alignment[0].seq):
-            raise ValueError("Query and reference alignments must be of the same length.")
+        # If no-align flag is set, skip MAFFT alignment (assume sequences are already aligned)
+        if args.no_align:
+            print(f"[INFO] Alignment skipped (--no-align specified). Assuming sequences are already aligned.")
+            # Check if query and reference alignments have the same length
+            if len(query_sequences[0].seq) != len(reference_sequences[0].seq):
+                raise ValueError("Query and reference alignments must be of the same length.")
+
+        else:
+            print(f"[INFO] Aligning query and reference sequences using MAFFT ...")
+
+            # Combine query and reference sequences into a single, temporary fasta file
+            combined_fasta = "temp_combined_sequences.fasta"
+            with open(combined_fasta, "w") as out_f:
+                SeqIO.write(query_sequences + reference_sequences, out_f, "fasta")
+
+            # Run MAFFT
+            aligned_fasta = "temp_aligned_sequences.fasta"
+            run_mafft(combined_fasta, aligned_fasta, threads=args.threads)
+
+            # Read aligned sequences
+            aligned_sequences = list(SeqIO.parse(aligned_fasta, "fasta"))
+
+            # Split aligned sequences back into query and reference sequences
+            query_ids = set(record.id for record in query_sequences)
+            query_sequences = [record for record in aligned_sequences if record.id in query_ids]
+            reference_sequences = [record for record in aligned_sequences if record.id not in query_ids]
+
+            # Remove temporary files
+            os.remove(combined_fasta)
+            os.remove(aligned_fasta)
+            print(f"[INFO] Alignment completed.")
+
         
         # Check if metadata covers all reference sequences
         if metadata is not None:
             if args.metadata_mode in ["reference", "both"]:
-                ref_ids = [record.id for record in reference_alignment]
+                ref_ids = [record.id for record in reference_sequences]
                 missing_refs = [rid for rid in ref_ids if rid not in metadata[args.metadata_id_col].values]
                 if len(missing_refs) > 0:
                     print(f"[WARN] The following reference IDs are missing from the metadata file: {', '.join(missing_refs)}")
         
         # Loop through each sequence in the query alignment
-        for query_record in query_alignment:
+        for query_record in query_sequences:
             query_id = query_record.id
             print(f"[INFO] Processing query sequence: {query_id}")
             
             # Create an alignment with the query sequence as the first sequence, followed by all reference sequences
-            final_alignment = [query_record] + reference_alignment
+            final_alignment = [query_record] + reference_sequences
             
             # Split the combined alignment into windows
             print(f"    └── Splitting alignment into windows (window size: {args.windowsize}, step size: {args.stepsize})")
@@ -164,14 +197,32 @@ def main():
             print(f"[INFO] Finished processing query sequence: {query_id}\n============================================================")
 
     elif args.query_id:
+
+        # If no-align flag is set, skip MAFFT alignment (assume sequences are already aligned)
+        if args.no_align:
+            print(f"[INFO] Alignment skipped (--no-align specified). Assuming sequences are already aligned.")
+        else:
+            print(f"[INFO] Aligning sequences using MAFFT ...")
+
+            # Run MAFFT
+            aligned_fasta = "temp_aligned_sequences.fasta"
+            run_mafft(args.sequences, aligned_fasta, threads=args.threads)
+
+            # Read aligned query sequences
+            query_sequences = list(SeqIO.parse(aligned_fasta, "fasta"))
+
+            # Remove temporary file
+            os.remove(aligned_fasta)
+            print(f"[INFO] Alignment completed.")
+
         query_id = args.query_id
         print(f"[INFO] Processing query sequence: {query_id}")
-        query_record = [record for record in query_alignment if record.id == query_id]
+        query_record = [record for record in query_sequences if record.id == query_id]
         if len(query_record) == 0:
             raise ValueError(f"Reference ID {query_id} not found in query alignment. Please provide a valid query ID that is present in the alignment.")
         
         # Reorder the alignment to position the query sequence as the first sequence
-        final_alignment = query_record + [record for record in query_alignment if record.id != query_id]
+        final_alignment = query_record + [record for record in query_sequences if record.id != query_id]
 
         # Split the combined alignment into windows
         print(f"    └── Splitting alignment into windows (window size: {args.windowsize}, step size: {args.stepsize})")
@@ -219,6 +270,12 @@ def main():
         raise ValueError("Please provide either a reference alignment file (--reference-alignment) or a query ID (--query-id).")
 
 
+# Function to to align sequences using MAFFT
+def run_mafft(input_fasta, output_fasta, threads=1):
+    mafft_cmd = ["mafft", "--auto", "--thread", str(threads), input_fasta]
+    with open(output_fasta, "w") as out_f:
+        subprocess.run(mafft_cmd, stdout=out_f)
+
 # Function to split the alignment into windows of the given window size and step size
 def split_alignment(alignment, windowsize, stepsize):
     windows = {} # Initialize a dictionary to store the windows
@@ -264,12 +321,12 @@ def calculate_pairwise_distances(alignment, current_step, gaps):
     query_id = alignment[0].id
     
     # Remove the query sequence from the alignment
-    reference_alignment = [record for record in alignment if record.id != query_id]
+    reference_sequences = [record for record in alignment if record.id != query_id]
     
     # Intialize results list
     results = []
     
-    for record in reference_alignment:
+    for record in reference_sequences:
         reference_seq = np.array(list(record.seq))
 
         if gaps == 0:
