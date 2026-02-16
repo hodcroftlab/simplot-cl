@@ -37,7 +37,9 @@ def get_args():
     parser.add_argument("-t", "--threads", type=int, default=1, help="Number of threads to use for MAFFT alignment (default: 1).")
     parser.add_argument("-f", "--outformat", default="png", help="Output file format for the plots (png/jpg/pdf/svg, default: png).")
     parser.add_argument("-p", "--outplots", default="simplots", help="Output directory for similarity plots (default: simplots).")
-    parser.add_argument("-o", "--outcsv", default=None, help="Output directory for tables with similarity results for each query; if not provided, tables will not be saved.")
+    parser.add_argument("-o", "--outcsv", default=None, help="Output directory for tables with similarity results for each query (optional). If not provided, tables will not be saved.")
+    parser.add_argument("-oa", "--outaln", default=None, help="Output file for alignment in fasta format (optional). If not provided, the alignment will not be saved.")
+
     
     # Register autocompletion
     argcomplete.autocomplete(parser)
@@ -276,9 +278,36 @@ def assign_colors(results_df, metadata=None, metadata_id_col=None, metadata_geno
 # Function to generate and save the SimPlots
 def plot_simplot(results_df, outdir, outformat, query_genotype=None, windowsize=None, stepsize=None):
 
-    # Make the similarity plot
-    fig, ax = plt.subplots(figsize=(18, 5))
-    
+    # Fixed physical size for the plot (axes) in inches
+    axes_width_in = 14.0   # physical width of the plotting area
+    fig_height_in = 5.0    # physical height of the figure (including margins)
+
+    # Base margins and paddings (in inches)
+    base_left_margin_in = 0.6
+    right_padding_in = 0.4
+    top_margin_in = 0.3
+    bottom_margin_in = 0.6
+
+    # Legend gap (extra space between axes and legend) in inches
+    legend_gap_in = 0.4  # increase this to add more space between axes and legend
+
+    # Compute axes physical height
+    axes_height_in = fig_height_in - top_margin_in - bottom_margin_in
+    if axes_height_in <= 0:
+        axes_height_in = fig_height_in * 0.8
+
+    # Start with a temporary extra space for legend (will be adjusted)
+    temp_legend_space_in = 2.0
+    initial_fig_width = base_left_margin_in + axes_width_in + temp_legend_space_in + right_padding_in
+
+    fig = plt.figure(figsize=(initial_fig_width, fig_height_in))
+    ax = fig.add_axes([
+        base_left_margin_in / initial_fig_width,
+        bottom_margin_in / fig_height_in,
+        axes_width_in / initial_fig_width,
+        axes_height_in / fig_height_in,
+    ])
+
     # Get IDs of reference sequences (plotting one line for each)
     reference_seqs = results_df["seq2"].unique()
 
@@ -286,11 +315,11 @@ def plot_simplot(results_df, outdir, outformat, query_genotype=None, windowsize=
     query_seq = results_df["seq1"].values[0]
     if query_genotype:
         query_seq = f"{query_seq} ({query_genotype})"
-    
+
     # Keep track of how many times each color has been used
     color_counts = {}
-    line_styles = ['-', '--', '-.', ':'] # If the same color is used multiple times, use different line styles
-    
+    line_styles = ['-', '--', '-.', ':']  # If the same color is used multiple times, use different line styles
+
     # Plot similarity for each reference sequence
     for seq in reference_seqs:
         seq_results = results_df[results_df["seq2"] == seq]
@@ -316,18 +345,66 @@ def plot_simplot(results_df, outdir, outformat, query_genotype=None, windowsize=
         color_counts[color] = count + 1
 
         ax.plot(seq_results["step"], seq_results["similarity"], label=label, color=color, linestyle=linestyle)
-    
+
     ax.set_title(f"Query Sequence: {query_seq}", fontsize=20)
     ax.set_xlabel("Position", fontsize=20)
     ax.set_ylabel("Similarity", fontsize=20)
+
     ncol = 2 if len(reference_seqs) > 14 else 1
-    ax.legend(
-        loc="center",                   # Center the legend box itself
-        bbox_to_anchor=(1.1, 0.5),      # Position relative to the right side of the plot
+
+    # Create a temporary legend to measure its size
+    legend = ax.legend(
+        loc="center left",
+        bbox_to_anchor=(1.0, 0.5),
         fontsize=12,
         ncol=ncol,
-        borderaxespad=0,                # Space between the legend and the axes
-        frameon=False                   # Remove the frame for a cleaner look
+        borderaxespad=0,
+        frameon=False,
+    )
+
+    # Draw canvas to compute sizes in pixels
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+
+    # Measure legend width in inches
+    legend_bb = legend.get_window_extent(renderer=renderer)
+    legend_width_in = legend_bb.width / fig.dpi
+
+    # Measure y-axis label and tick label widths to ensure left margin is sufficient
+    try:
+        ylabel_bb = ax.yaxis.get_label().get_window_extent(renderer=renderer)
+        ylabel_width_in = ylabel_bb.width / fig.dpi
+    except Exception:
+        ylabel_width_in = 0.0
+
+    # Some tick labels may be empty; consider only visible ones
+    ytick_bboxes = [t.get_window_extent(renderer=renderer) for t in ax.get_yticklabels() if t.get_text() != ""]
+    max_ytick_width_in = max((bb.width for bb in ytick_bboxes), default=0.0) / fig.dpi
+
+    # Compute required left margin: ensure there's enough space for ticks + ylabel + a small padding
+    required_label_space_in = max(ylabel_width_in, max_ytick_width_in)
+    desired_left_margin_in = max(base_left_margin_in, required_label_space_in + 0.35)  # 0.35in padding
+
+    # Compute the new figure width so that axes keep their physical size and legend has enough space
+    new_fig_width = desired_left_margin_in + axes_width_in + legend_gap_in + legend_width_in + right_padding_in
+
+    # Resize the figure and recompute axes position so the axes keep their physical size
+    fig.set_size_inches(new_fig_width, fig_height_in)
+
+    # Recompute axes position in figure-relative coordinates and set it
+    new_left = desired_left_margin_in / new_fig_width
+    new_axes_width_frac = axes_width_in / new_fig_width
+    ax.set_position([new_left, bottom_margin_in / fig_height_in, new_axes_width_frac, axes_height_in / fig_height_in])
+
+    # Remove and recreate legend so it is placed correctly after resizing and with extra gap
+    legend.remove()
+    legend = ax.legend(
+        loc="center left",
+        bbox_to_anchor=(1.0 + (legend_gap_in / new_fig_width), 0.5),
+        fontsize=12,
+        ncol=ncol,
+        borderaxespad=0,
+        frameon=False,
     )
 
     # Plot parameter choices in the bottom left corner of the plot (window size, step size)
@@ -338,9 +415,12 @@ def plot_simplot(results_df, outdir, outformat, query_genotype=None, windowsize=
     ax.tick_params(axis="both", which="major", labelsize=16)
     y_min = results_df["similarity"].min() - 0.02
     ax.set_ylim(y_min, 1.02)
-    query_seq = query_seq.replace(" ", "_").replace("(", "").replace(")", "").replace("-", "")
-    plt.tight_layout()
-    plt.savefig(f"{outdir}/{query_seq}_simplot.{outformat}")
+
+    # Clean file-safe query name
+    query_seq_fname = query_seq.replace(" ", "_").replace("(", "").replace(")", "").replace("-", "")
+
+    # Save using the current figure size (which accounts for legend)
+    plt.savefig(f"{outdir}/{query_seq_fname}_simplot.{outformat}", dpi=fig.dpi, bbox_inches="tight")
     ax.clear()
     plt.close(fig)
 
@@ -351,6 +431,8 @@ def main():
 
     # Read query sequences
     query_sequences = list(SeqIO.parse(args.sequences, "fasta"))
+    for record in query_sequences:    # Convert to uppercase and replace any Us with Ts
+        record.seq = record.seq.upper().replace("U", "T")
 
     # Read metadata if provided
     if args.metadata:
@@ -412,6 +494,9 @@ def main():
             # Check if query and reference alignments have the same length
             if len(query_sequences[0].seq) != len(reference_sequences[0].seq):
                 raise ValueError("Query and reference alignments must be of the same length.")
+            
+            if args.outaln:
+                print("[WARN] --outaln specified but --no-align flag is set. Skipping alignment output since no alignment was performed.")
 
         else:
             print(f"[INFO] Aligning query and reference sequences using MAFFT ...")
@@ -422,7 +507,11 @@ def main():
                 SeqIO.write(query_sequences + reference_sequences, out_f, "fasta")
 
             # Run MAFFT
-            aligned_fasta = "temp_aligned_sequences.fasta"
+            # Check if user provided an output file for the alignment; if not, use a temporary file that will be deleted after reading the aligned sequences
+            if args.outaln:
+                aligned_fasta = args.outaln
+            else:
+                aligned_fasta = "temp_aligned_sequences.fasta"
             run_mafft(combined_fasta, aligned_fasta, threads=args.threads)
 
             # Read aligned sequences
@@ -433,10 +522,14 @@ def main():
             query_sequences = [record for record in aligned_sequences if record.id in query_ids]
             reference_sequences = [record for record in aligned_sequences if record.id not in query_ids]
 
+
+            print(f"[INFO] Alignment completed.")
             # Remove temporary files
             os.remove(combined_fasta)
-            os.remove(aligned_fasta)
-            print(f"[INFO] Alignment completed.")
+            if not args.outaln:
+                os.remove(aligned_fasta)
+            else:
+                print(f"[INFO] Aligned sequences saved to {args.outaln}.")
 
         
         # Check if metadata covers all reference sequences
@@ -501,19 +594,27 @@ def main():
         # If no-align flag is set, skip MAFFT alignment (assume sequences are already aligned)
         if args.no_align:
             print(f"[INFO] Alignment skipped (--no-align specified). Assuming sequences are already aligned.")
+
+            if args.outaln:
+                print("[WARN] --outaln specified but --no-align flag is set. Skipping alignment output since no alignment was performed.")
         else:
             print(f"[INFO] Aligning sequences using MAFFT ...")
 
             # Run MAFFT
-            aligned_fasta = "temp_aligned_sequences.fasta"
+            if args.outaln:
+                aligned_fasta = args.outaln
+            else:
+                aligned_fasta = "temp_aligned_sequences.fasta"
             run_mafft(args.sequences, aligned_fasta, threads=args.threads)
 
             # Read aligned query sequences
             query_sequences = list(SeqIO.parse(aligned_fasta, "fasta"))
 
-            # Remove temporary file
-            os.remove(aligned_fasta)
             print(f"[INFO] Alignment completed.")
+            if not args.outaln:
+                os.remove(aligned_fasta) # Remove temporary file
+            else:
+                print(f"[INFO] Aligned sequences saved to {args.outaln}.")
 
         query_id = args.query_id
         print(f"[INFO] Processing query sequence: {query_id}")
