@@ -107,8 +107,8 @@ python simplot.py \
     -p simplots \
     --no-align
 ```
-
 <br>
+
 **With a separate reference alignment** <br>
 Compare all query sequences in query_alignment.fasta to all references in references_alignment.fasta (here again, the sequences in the two fasta files are already aligned, so `--no-align` is used):
 
@@ -121,8 +121,8 @@ python simplot.py \
     -p simplots \
     --no-align
 ```
-
 <br>
+
 **With metadata and custom colors** <br>
 Providing a metadata.csv/tsv file which maps sequence IDs to genotypes enables annotation of genotypes in the output plots as well as coloring the lines by genotype. Default expected metadata column names are "Accession" and "Genotype", but other names can be specified using `--metadata-id-col` (`-mi`) and `--metadata-genotype-col` (`-mg`). Custom genotype colors can be used by providing a colors.csv/tsv file mapping genotype names to color codes.
 
