@@ -95,8 +95,7 @@ Plots show:
 
 ## Examples
 
-**Simple run**
-
+**Simple run** <br>
 Compare two query sequences to all other sequences in the same alignment (sequences are already aligned, so `--no-align` is used):
 
 ```
@@ -109,8 +108,8 @@ python simplot.py \
     --no-align
 ```
 
-**With a separate reference alignment**
-
+<br>
+**With a separate reference alignment** <br>
 Compare all query sequences in query_alignment.fasta to all references in references_alignment.fasta (here again, the sequences in the two fasta files are already aligned, so `--no-align` is used):
 
 ```
@@ -123,8 +122,8 @@ python simplot.py \
     --no-align
 ```
 
-**With metadata and custom colors**
-
+<br>
+**With metadata and custom colors** <br>
 Providing a metadata.csv/tsv file which maps sequence IDs to genotypes enables annotation of genotypes in the output plots as well as coloring the lines by genotype. Default expected metadata column names are "Accession" and "Genotype", but other names can be specified using `--metadata-id-col` (`-mi`) and `--metadata-genotype-col` (`-mg`). Custom genotype colors can be used by providing a colors.csv/tsv file mapping genotype names to color codes.
 
 ```
@@ -153,11 +152,11 @@ Genotype C	#2ca02c
 
 ## References
 
-Original SimPlot software: https://sray.med.som.jhmi.edu/SCRoftware/SimPlot/ <br>
+**Original SimPlot software**: https://sray.med.som.jhmi.edu/SCRoftware/SimPlot/ <br>
 Lole, Kavita S., et al. "Full-length human immunodeficiency virus type 1 genomes from subtype C-infected seroconverters in India, with evidence of intersubtype recombination." Journal of virology 73.1 (1999): 152-160.
 
-SimPlot++ (modern GUI version): https://github.com/Stephane-S/Simplot_PlusPlus <br>
+**SimPlot++** (modern GUI version): https://github.com/Stephane-S/Simplot_PlusPlus <br>
 Samson, Stéphane, Étienne Lord, and Vladimir Makarenkov. "SimPlot++: a Python application for representing sequence similarity and detecting recombination." Bioinformatics 38.11 (2022): 3118-3120.
 
-MAFFT: https://mafft.cbrc.jp/alignment/software/ <br>
+**MAFFT**: https://mafft.cbrc.jp/alignment/software/ <br>
 Katoh, Kazutaka, and Daron M. Standley. "MAFFT multiple sequence alignment software version 7: improvements in performance and usability." Molecular biology and evolution 30.4 (2013): 772-780.
