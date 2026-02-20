@@ -45,15 +45,15 @@ The script can run in two main ways:
 
 1️⃣ **Using one fasta file (specify a query ID)**
 
-```python simplot.py -s sequences.fasta -q Query1 Query2 ```
+```python simplot.py -s sequences.fasta -q Query1 Query2 ``` <br>
 SimPlots will be generated for Query1 and Query2 in sequences.fasta, using all other sequences in sequences.fasta as references.
 
 2️⃣ **Using separate query and reference fastas**
 
-```python simplot.py -s sequences.fasta -r references.fasta ```
+```python simplot.py -s sequences.fasta -r references.fasta ``` <br>
 SimPlots will be generated for all sequences in sequences.fasta, using all sequences in references.fasta as references.
 
-Then you can tweak window size, step size, output directories, metadata, colors, etc. using the arguments listed below.
+Window size, step size, output directories, metadata, colors, etc. can be customized using the arguments listed below.
 
 ## Arguments
 
@@ -99,17 +99,33 @@ Plots show:
 
 Compare two query sequences to all other sequences in the same alignment (sequences are already aligned, so `--no-align` is used):
 
-```python simplot.py -s demo_data/query_alignment.fasta -q OP137282.1 JX274981.1 -ws 150 -ss 50 -p simplots --no-align```
+```
+python simplot.py \
+    -s demo_data/query_alignment.fasta \
+    -q OP137282.1 JX274981.1 \
+    -ws 150 \
+    -ss 50 \
+    -p simplots \
+    --no-align
+```
 
 **With a separate reference alignment**
 
 Compare all query sequences in query_alignment.fasta to all references in references_alignment.fasta (here again, the sequences in the two fasta files are already aligned, so `--no-align` is used):
 
-```python simplot.py -s demo_data/query_alignment.fasta -r demo_data/reference_alignment.fasta -ws 200 -ss 100 -p simplots --no-align```
+```
+python simplot.py \
+    -s demo_data/query_alignment.fasta \
+    -r demo_data/reference_alignment.fasta \
+    -ws 200 \
+    -ss 100 \
+    -p simplots \
+    --no-align
+```
 
 **With metadata and custom colors**
 
-Providing a metadata.csv/tsv file which maps sequence IDs to genotypes enables annotation of genotypes in the output plots as well as line coloring by genotype. Default expected metadata column names are "Accession" and "Genotype", but other names can be specified using `--metadata-id-col` (`-mi`) and `--metadata-genotype-col` (`-mg`). Custom genotype colors can be used by providing a colors.csv/tsv file mapping genotype names to color codes.
+Providing a metadata.csv/tsv file which maps sequence IDs to genotypes enables annotation of genotypes in the output plots as well as coloring the lines by genotype. Default expected metadata column names are "Accession" and "Genotype", but other names can be specified using `--metadata-id-col` (`-mi`) and `--metadata-genotype-col` (`-mg`). Custom genotype colors can be used by providing a colors.csv/tsv file mapping genotype names to color codes.
 
 ```
 python simplot.py \
@@ -123,16 +139,16 @@ python simplot.py \
 Example `metadata.csv`:
 ```
 Accession, Genotype
-Query1, A
-Ref1, B
-Ref2, C
+Query1, Genotype A
+Ref1, Genotype B
+Ref2, Genotype C
 ```
 
 Example `colors.tsv`:
 ```
-A	#1f77b4
-B	#ff7f0e
-C	#2ca02c
+Genotype A	#1f77b4
+Genotype B	#ff7f0e
+Genotype C	#2ca02c
 ```
 
 ## References
@@ -143,5 +159,5 @@ Lole, Kavita S., et al. "Full-length human immunodeficiency virus type 1 genomes
 SimPlot++ (modern GUI version): https://github.com/Stephane-S/Simplot_PlusPlus <br>
 Samson, Stéphane, Étienne Lord, and Vladimir Makarenkov. "SimPlot++: a Python application for representing sequence similarity and detecting recombination." Bioinformatics 38.11 (2022): 3118-3120.
 
-MAFFT: <br>
+MAFFT: https://mafft.cbrc.jp/alignment/software/ <br>
 Katoh, Kazutaka, and Daron M. Standley. "MAFFT multiple sequence alignment software version 7: improvements in performance and usability." Molecular biology and evolution 30.4 (2013): 772-780.
