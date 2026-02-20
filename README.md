@@ -1,9 +1,12 @@
 # SimPlot-CL: A Command-Line Similarity Plot Generator
+<sup><ins>Keno Strotjohann</ins> & Emma B Hodcroft</sup>
 
 SimPlot-CL is a simplified, Python-based command-line reimplementation of the classic SimPlot program (Lole et al., 1999). It lets you generate similarity plots (SimPlots) and pairwise similarity tables directly from sequence alignments, without the need for a GUI.
 
 I built this mainly for my own viral genomics work, where I wanted to run lots of SimPlot analyses automatically instead of clicking through the Windows interface a hundred times.
 If you have the same problem, this might save you some time too.
+
+If you use this program and wish to cite it, please cite both this repository (see citation file) and the classic SimPlot program by [Lole et al.](https://pubmed.ncbi.nlm.nih.gov/9847317/) (as well as [MAFFT](https://mafft.cbrc.jp/alignment/software/), if appropriate).
 
 ## What this does
 
