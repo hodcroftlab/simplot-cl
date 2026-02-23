@@ -15,8 +15,9 @@ import matplotlib as mpl
 import subprocess
 mpl.use("agg") # Use the Agg backend to save plots without displaying them
 
-# Set font to Arial
-plt.rcParams["font.family"] = "Arial"
+# Set font (Arial if available, otherwise DejaVu Sans)
+plt.rcParams["font.family"] = "sans-serif"
+plt.rcParams["font.sans-serif"] = ["Arial", "DejaVu Sans"]
 
 
 # Define arguments
