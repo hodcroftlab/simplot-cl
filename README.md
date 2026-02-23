@@ -27,16 +27,30 @@ For each sliding window:
 - Then $\text{similarity} = 1 - p$.
 That’s what’s plotted along the genome.
 
-## Requirements
-Requires Python ≥ 3.9, MAFFT v7, and the following libraries:
+## Requirements and Installation
+Requires Python ≥ 3.9 and the following libraries:
 
 ```
+biopython
+mafft
 pandas
 numpy
-biopython
 matplotlib
-subprocess
 argcomplete
+```
+
+We recommend using micromamba for fast and reliable environment creation. To create the environment from the provided ```environment.yml```, run:
+
+```
+micromamba create -f environment.yml
+micromamba activate simplot
+```
+
+If you prefer conda, you can create the same environment with:
+
+```
+conda env create -f environment.yml
+conda activate simplot
 ```
 
 ## Usage
@@ -45,12 +59,12 @@ The script can run in two main ways:
 
 1️⃣ **Using one fasta file (specify a query ID)**
 
-```python simplot.py -s sequences.fasta -q Query1 Query2 ``` <br>
+```python simplot.py -s sequences.fasta -q Query1 Query2``` <br>
 SimPlots will be generated for Query1 and Query2 in sequences.fasta, using all other sequences in sequences.fasta as references.
 
 2️⃣ **Using separate query and reference fastas**
 
-```python simplot.py -s sequences.fasta -r references.fasta ``` <br>
+```python simplot.py -s sequences.fasta -r references.fasta``` <br>
 SimPlots will be generated for all sequences in sequences.fasta, using all sequences in references.fasta as references.
 
 Window size, step size, output directories, metadata, colors, etc. can be customized using the arguments listed below.

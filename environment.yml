@@ -1,0 +1,16 @@
+name: simplot
+
+channels:
+  - conda-forge
+  - bioconda
+  
+channel_priority: strict
+
+dependencies:
+  - python=3.12
+  - biopython
+  - pandas
+  - numpy
+  - matplotlib
+  - argcomplete
+  - mafft
