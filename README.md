@@ -11,7 +11,7 @@ If you use this program and wish to cite it, please cite both this repository (s
 ## What this does
 
 Given one or more viral genome sequences in a fasta file, the script:
-1. Aligns the sequences (optional; when an alignment is given as input, this can be skipped with `--no-align`)
+1. Aligns the sequences (optional; when an alignment is given as input, this step can be skipped with `--no-align`)
 2. Splits the alignment into overlapping windows of a chosen size.
 3. Calculates the pairwise similarity between a query and other sequences in each window.
 4. Produces:
