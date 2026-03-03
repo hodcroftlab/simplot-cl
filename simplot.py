@@ -42,6 +42,10 @@ def get_args():
     parser.add_argument("-p", "--outplots", default="simplots", help="Output directory for similarity plots (default: simplots).")
     parser.add_argument("-o", "--outcsv", default=None, help="Output directory for tables with similarity results for each query (optional). If not provided, tables will not be saved.")
     parser.add_argument("-oa", "--outaln", default=None, help="Output file for alignment in fasta format (optional). If not provided, the alignment will not be saved.")
+    # Plot size customization (axes width and figure height) in inches
+    parser.add_argument("-wd", "--width", type=float, default=14.0, help="Width of the plotting axes area in inches (default: 14.0).")
+    parser.add_argument("-ht", "--height", type=float, default=5.0, help="Height of the entire figure in inches (default: 5.0).")
+
     
     # Register autocompletion
     argcomplete.autocomplete(parser)
@@ -284,11 +288,7 @@ def assign_colors(results_df, metadata=None, metadata_id_col=None, metadata_geno
 
 
 # Function to generate and save the SimPlots
-def plot_simplot(results_df, outdir, outformat, query_genotype=None, windowsize=None, stepsize=None):
-
-    # Fixed physical size for the plot (axes) in inches
-    axes_width_in = 14.0   # physical width of the plotting area
-    fig_height_in = 5.0    # physical height of the figure (including margins)
+def plot_simplot(results_df, outdir, outformat, query_genotype=None, windowsize=None, stepsize=None, axes_width_in=14.0, fig_height_in=5.0):
 
     # Base margins and paddings (in inches)
     base_left_margin_in = 0.6
@@ -597,7 +597,7 @@ def main():
                 
             # Plot the SimPlot
             print(f"    └── Creating SimPlot")
-            plot_simplot(results_df, args.outplots, args.outformat, query_genotype, args.windowsize, args.stepsize)
+            plot_simplot(results_df, args.outplots, args.outformat, query_genotype, args.windowsize, args.stepsize, axes_width_in=args.width, fig_height_in=args.height)
 
             print(f"[INFO] Finished processing query sequence: {query_id}\n============================================================")
 
@@ -688,9 +688,10 @@ def main():
 
             # Plot the SimPlot
             print(f"    └── Creating SimPlot")
-            plot_simplot(results_df, args.outplots, args.outformat, query_genotype, args.windowsize, args.stepsize)
+            plot_simplot(results_df, args.outplots, args.outformat, query_genotype, args.windowsize, args.stepsize, axes_width_in=args.width, fig_height_in=args.height)
 
             print(f"[INFO] Finished processing query sequence: {query_id}\n============================================================")
+    
     else:
         raise ValueError("Please provide either a reference alignment file (--reference-alignment) or a query ID (--query-id).")
 

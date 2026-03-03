@@ -60,14 +60,16 @@ conda activate simplot
 
 The script can run in two main ways:
 
-1️⃣ **Using one fasta file (specify a query ID)**
+1️⃣ **Using one fasta file - specify query ID(s)**
 
-```python simplot.py -s sequences.fasta -q Query1 Query2``` <br>
+```python simplot.py -s sequences.fasta -q Query1 Query2```
+
 SimPlots will be generated for Query1 and Query2 in sequences.fasta, using all other sequences in sequences.fasta as references.
 
 2️⃣ **Using separate query and reference fastas**
 
-```python simplot.py -s sequences.fasta -r references.fasta``` <br>
+```python simplot.py -s sequences.fasta -r references.fasta```
+
 SimPlots will be generated for all sequences in sequences.fasta, using all sequences in references.fasta as references.
 
 Window size, step size, output directories, metadata, colors, etc. can be customized using the arguments listed below.
@@ -95,7 +97,8 @@ Window size, step size, output directories, metadata, colors, etc. can be custom
 | `-p`, `--outplots`               | Directory for plot outputs (default: `simplots/`).                             |
 | `-o`, `--outcsv`                 | Directory for CSV outputs (optional; if not provided, tables will not be saved).                                          |
 | `-oa`, `--outaln`              | Output file path for alignment in fasta format (optional). If not provided, the alignment will not be saved.                                      |
-
+| `-ht`, `--height`               | Height of the entire figure in inches (default: 5.0).                             |
+| `-wd`, `--width`               | Width of the plotting axes area in inches (default: 14.0).                             |
 
 ## Output
 
@@ -141,7 +144,7 @@ python simplot.py \
 <br>
 
 **With metadata and custom colors** <br>
-Providing a metadata.csv/tsv file which maps sequence IDs to genotypes enables annotation of genotypes in the output plots as well as coloring the lines by genotype. Default expected metadata column names are "Accession" and "Genotype", but other names can be specified using `--metadata-id-col` (`-mi`) and `--metadata-genotype-col` (`-mg`). Custom genotype colors can be used by providing a colors.csv/tsv file mapping genotype names to color codes.
+Providing a metadata.csv/tsv file which maps sequence IDs to genotypes enables annotation of genotypes in the output plots as well as coloring the lines by genotype. Default expected metadata column names are "Accession" and "Genotype", but other column names can be specified using `--metadata-id-col` (`-mi`) and `--metadata-genotype-col` (`-mg`). Custom genotype colors can be used by providing a colors.csv/tsv file which maps genotype names to color codes.
 
 ```
 python simplot.py \
