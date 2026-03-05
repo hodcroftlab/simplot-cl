@@ -1,0 +1,46 @@
+cff-version: 1.2.0
+title: "SimPlot-CL"
+message: "If you use SimPlot-CL in your research, please cite it using the metadata below."
+type: software
+
+authors:
+  - family-names: "Strotjohann"
+    given-names: "Keno"
+    orcid: "https://orcid.org/0009-0003-3675-3039"
+    affiliation: 
+      - "Swiss Tropical and Public Health Institute"
+      - "University of Basel"
+      - "Swiss Institute of Bioinformatics"
+  - family-names: "Hodcroft"
+    given-names: "Emma B"
+    orcid: "https://orcid.org/0000-0002-0078-2212"
+    affiliation: 
+      - "Swiss Tropical and Public Health Institute"
+      - "University of Basel"
+      - "Swiss Institute of Bioinformatics"
+
+repository-code: "https://github.com/hodcroftlab/simplot-cl"
+url: "https://github.com/hodcroftlab/simplot-cl"
+
+version: "1.0.0"
+date-released: 2026-02-26
+
+license: "AGPL-3.0-only"
+
+keywords:
+  - bioinformatics
+  - viral genomics
+  - recombination
+  - similarity plot
+  - sequence analysis
+  - command-line tool
+
+abstract: >
+  SimPlot-CL is a lightweight, Python-based command-line tool for generating
+  similarity plots (SimPlots) from nucleotide sequences.
+  It enables automated, reproducible sliding-window similarity analysis
+  for viral genomics.
+
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.18863590
