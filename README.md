@@ -92,13 +92,13 @@ Window size, step size, output directories, metadata, colors, etc. can be custom
 | `-ws`, `--windowsize`             | Window size (default: 100).                                                    |
 | `-ss`, `--stepsize`               | Step size between windows (default: 50).                                       |
 | `-g`, `--gaps`                   | How to treat gaps: 0 = skip position if one or both sequences have a gap, 1 = mismatch if one has a gap, match if both have a gap, 2 = mismatch if one has a gap, skip position if both have a gap.  |
-| `-t`, `--threads`               | Number of threads to use for MAFFT alignment (default: 1).                             |
 | `-f`, `--outformat`              | Output file format for the plots: `png`, `pdf`, `svg`, or `jpg` (default: `png`).                                      |
+| `-ht`, `--height`               | Height of the entire figure in inches (default: 5.0).                             |
+| `-wd`, `--width`               | Width of the plotting axes area in inches (default: 14.0).                             |
 | `-p`, `--outplots`               | Directory for plot outputs (default: `simplots/`).                             |
 | `-o`, `--outcsv`                 | Directory for CSV outputs (optional; if not provided, tables will not be saved).                                          |
 | `-oa`, `--outaln`              | Output file path for alignment in fasta format (optional). If not provided, the alignment will not be saved.                                      |
-| `-ht`, `--height`               | Height of the entire figure in inches (default: 5.0).                             |
-| `-wd`, `--width`               | Width of the plotting axes area in inches (default: 14.0).                             |
+
 
 ## Output
 
