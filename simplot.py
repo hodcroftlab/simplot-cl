@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-### Similarity plot generator v1.0.5
+### Similarity plot generator v1.0.4
 
 # Import required packages
 import pandas as pd
