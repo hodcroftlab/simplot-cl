@@ -30,7 +30,7 @@ Five distance models are currently available (see `--distance-model`):
 | Model | Description |
 |-------|-------------|
 | `pdist` | p-distance: raw proportion of differing sites (default) |
-| `jc69` | Jukes-Cantor 1969: single-rate correction for multiple hits |
+| `jc69` | Jukes-Cantor 1969: accounts for unseen mutations, assumes equal base frequencies and single substitution rate |
 | `k80` | Kimura 1980: separate rates for transitions and transversions |
 | `hky` | Hasegawa-Kishino-Yano 1984/85: empirical base frequencies, single transition rate |
 | `tn93` | Tamura-Nei 1993: empirical base frequencies, separate purine/pyrimidine transition rates |
