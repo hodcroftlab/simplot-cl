@@ -159,13 +159,13 @@ python simplot.py \
 <br>
 
 **With a model-based distance, metadata and custom colors** <br>
-Use the TN93 distance model and annotate sequences by genotype:
+Use the K80 distance model and annotate sequences by genotype:
 
 ```
 python simplot.py \
     -s demo_data/query_alignment.fasta \
     -r demo_data/reference_alignment.fasta \
-    -dm tn93 \
+    -dm k80 \
     -m demo_data/metadata.csv \
     -c demo_data/colors.tsv \
     --no-align
