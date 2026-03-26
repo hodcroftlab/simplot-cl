@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-### Similarity plot generator v1.0.0
+### Similarity plot generator v1.0.5
 
 # Import required packages
 import pandas as pd
@@ -36,7 +36,26 @@ def get_args():
     parser.add_argument("-c", "--colors", default=None, help="Path to input colors file (tsv/csv). If provided, colors will be used for each genotype in the output plot.")
     parser.add_argument("-ws", "--windowsize", type=int, default=100, help="Window size for similarity plots (default: 100).")
     parser.add_argument("-ss", "--stepsize", type=int, default=50, help="Step size for similarity plots (default: 50).")
-    parser.add_argument("-g", "--gaps", type=int, default=0, help="How to deal with gaps (default: 0):\n 0 = skip position if one or both sequences have a gap\n 1 = mismatch if one has a gap, match if both have a gap\n 2 = mismatch if one has a gap, skip position if both have a gap.")
+    parser.add_argument("-dm", "--distance-model", default="pdist",
+                        choices=["pdist", "jc69", "k80", "hky", "tn93"],
+                        help="Distance model to use for similarity calculations (default: pdist):\n"
+                             " pdist  = p-distance (raw proportion of differing sites)\n"
+                             " jc69   = Jukes-Cantor 1969 (equal base frequencies, one rate)\n"
+                             " k80    = Kimura 1980 (one transition rate, one transversion rate)\n"
+                             " hky    = Hasegawa-Kishino-Yano 1984/85 (empirical freqs, single ts rate)\n"
+                             " tn93   = Tamura-Nei 1993 (empirical freqs, separate purine/pyrimidine ts rates)\n"
+                             "NOTE: For hky and tn93, base frequencies are estimated from the full\n"
+                             "alignment across all sequences by default (see --local-freqs).")
+    parser.add_argument("-lf", "--local-freqs", action="store_true",
+                        help="If set, estimate base frequencies per window rather than from the full\n"
+                             "alignment (only affects hky and tn93). This captures local variation in\n"
+                             "base composition along the genome, but estimates may be noisy in short\n"
+                             "windows. By default, frequencies are estimated once from the full alignment.")
+    parser.add_argument("-mgf", "--max-gap-frequency", type=float, default=0.1,
+                        help="Maximum allowed proportion of gap/ambiguous positions in a window (0.0-1.0).\n"
+                             "If the proportion of stripped positions exceeds this threshold, the window is\n"
+                             "skipped for that pair and reported as missing in the output (optional; default=0.1).\n"
+                             "Example: --max-gap-frequency 0.5 skips any window where >50%% of sites were gaps.")
     parser.add_argument("-t", "--threads", type=int, default=1, help="Number of threads to use for MAFFT alignment (default: 1).")
     parser.add_argument("-f", "--outformat", default="png", help="Output file format for the plots (png/jpg/pdf/svg, default: png).")
     parser.add_argument("-p", "--outplots", default="simplots", help="Output directory for similarity plots (default: simplots).")
@@ -45,7 +64,6 @@ def get_args():
     # Plot size customization (axes width and figure height) in inches
     parser.add_argument("-wd", "--width", type=float, default=14.0, help="Width of the plotting axes area in inches (default: 14.0).")
     parser.add_argument("-ht", "--height", type=float, default=5.0, help="Height of the entire figure in inches (default: 5.0).")
-
     
     # Register autocompletion
     argcomplete.autocomplete(parser)
@@ -68,95 +86,389 @@ def normalize_records(records):
 def split_alignment(alignment, windowsize, stepsize):
     windows = {}    # Initialize a dictionary to store the windows
     sequence_length = len(alignment[0].seq)
-    
-    # Split the alignment into windows of the given window size, centered around the step size * i
-    # At edges, the window size will be smaller
-    for i in range(1, len(alignment[0].seq) // stepsize + 1):
-        center = i * stepsize
+
+    # Only emit windows that fit completely within the sequence (no edge truncation)
+    # This means every plotted point represents exactly windowsize sites
+    first_center = windowsize // 2  # first position where a full window fits against the left edge
+    last_center  = sequence_length - (windowsize - windowsize // 2)  # last position where a full window fits against the right edge
+
+    if first_center > last_center:
+        # Sequence is shorter than the window; no valid windows exist
+        return windows
+
+    for center in range(first_center, last_center + 1, stepsize):
         start = center - windowsize // 2
-        end = center + windowsize // 2
-        
-        if start < 0:
-            start = 0
-        
-        if end > sequence_length:
-            end = sequence_length
-            
-        # Initialize alignment for each window
+        end   = start + windowsize
+
+        start = max(0, start)
+        end   = min(sequence_length, end)
+
+        if start >= end:
+            continue
+
         window_alignment = []
-            
         for record in alignment:
-            sub_seq = record.seq[start:end]   # Slice the sequence
-            
-            # Create a new SeqRecord object with the sliced sequence
-            new_record = record[:]     # Make a shallow copy of the record
-            new_record.seq = sub_seq   # Assign the sliced sequence
-            
-            # Append the new record to the window alignment
+            sub_seq    = record.seq[start:end]
+            new_record = record[:]
+            new_record.seq = sub_seq
             window_alignment.append(new_record)
-            
-        # Store the windowed alignment in the dictionary with the center position as the key
+
         windows[center] = window_alignment
-        
+
     return windows
 
 
+# ---------------------------------------------------------------------------
+# Distance model functions
+#
+# Each function receives:
+#   seq1, seq2  : 1-D numpy arrays of single characters, already filtered to
+#                 valid (unambiguous nucleotide) positions
+#   base_freqs  : dict of {A, C, G, T} -> float, pre-computed from the full
+#                 window alignment (used by HKY85 and TN93). When None, freqs
+#                 are estimated from seq1 and seq2 alone (fallback for the
+#                 simple one-query / one-reference case).
+#
+# A return value of np.nan signals that the formula could not be evaluated
+# (e.g. a log argument is <= 0 due to saturation), in which case the caller
+# falls back to p-distance and emits a warning.
+# ---------------------------------------------------------------------------
+
+def _compute_base_freqs(arrays):
+    """Estimate base frequencies from one or more 1-D nucleotide arrays.
+
+    Parameters
+    ----------
+    arrays : list of np.ndarray
+        One or more arrays of nucleotide characters (A/C/G/T only).
+        Pass all sequences in the window alignment for alignment-wide
+        estimation, or just [seq1, seq2] for per-pair estimation.
+
+    Returns
+    -------
+    dict  {base: frequency}  with keys A, C, G, T.
+    """
+    combined = np.concatenate(arrays)
+    n = len(combined)
+    return {base: np.sum(combined == base) / n for base in ("A", "C", "G", "T")}
+
+
+def _freqs_from_records(records):
+    """Estimate base frequencies from a list of SeqRecords.
+
+    Only unambiguous nucleotide positions (A/C/G/T) are counted; gaps and
+    ambiguous characters are excluded. Used to compute full-alignment
+    frequencies before the windowing loop when --global-freqs is set.
+
+    Parameters
+    ----------
+    records : list of SeqRecord
+
+    Returns
+    -------
+    dict  {base: frequency}  with keys A, C, G, T, or None if no valid sites.
+    """
+    NUCLEOTIDES = {"A", "C", "G", "T"}
+    arrays = []
+    for rec in records:
+        seq = np.array(list(rec.seq))
+        valid = seq[np.isin(seq, list(NUCLEOTIDES))]
+        if len(valid) > 0:
+            arrays.append(valid)
+    if not arrays:
+        return None
+    return _compute_base_freqs(arrays)
+
+
+def dist_pdist(seq1, seq2, base_freqs=None):
+    """p-distance: proportion of differing sites.
+
+    p = x / n
+    where x is the number of differing sites and n is the sequence length.
+    (Decoding Genomes, Stadler et al. 2024, eq. 5.69)
+
+    base_freqs is accepted but not used (present for a consistent signature).
+    """
+    return np.sum(seq1 != seq2) / len(seq1)
+
+
+def dist_jc69(seq1, seq2, base_freqs=None):
+    """Jukes-Cantor 69 distance.
+
+    d_JC69 = -(3/4) * log(1 - (4/3)*p)
+    where p = x/n is the proportion of differing sites.
+    (Decoding Genomes, Stadler et al. 2024, eq. 5.68-5.69)
+
+    Assumes equal base frequencies, so alignment-wide base_freqs are not used.
+    Returns np.nan if the log argument is non-positive (p >= 0.75).
+    """
+    p = dist_pdist(seq1, seq2)
+    arg = 1.0 - (4.0 / 3.0) * p
+    if arg <= 0:
+        return np.nan
+    return -0.75 * np.log(arg)
+
+
+def dist_k80(seq1, seq2, base_freqs=None):
+    """Kimura 1980 (K80 / K2P) distance.
+
+    d_K80 = -(1/2) * log(1 - 2S - V) - (1/4) * log(1 - 2V)
+    where:
+      S = proportion of sites with transitional differences (A<->G or C<->T)
+      V = proportion of sites with transversional differences
+    (Decoding Genomes, Stadler et al. 2024, eq. 5.70)
+
+    Assumes equal base frequencies, so alignment-wide base_freqs are not used.
+    Returns np.nan if either log argument is non-positive.
+    """
+    n = len(seq1)
+    ts = (
+        ((seq1 == "A") & (seq2 == "G")) | ((seq1 == "G") & (seq2 == "A")) |
+        ((seq1 == "C") & (seq2 == "T")) | ((seq1 == "T") & (seq2 == "C"))
+    )
+    diff = seq1 != seq2
+    S = np.sum(ts) / n
+    V = np.sum(diff & ~ts) / n
+
+    arg1 = 1.0 - 2.0 * S - V
+    arg2 = 1.0 - 2.0 * V
+    if arg1 <= 0 or arg2 <= 0:
+        return np.nan
+    return -0.5 * np.log(arg1) - 0.25 * np.log(arg2)
+
+
+def dist_hky(seq1, seq2, base_freqs=None):
+    """Hasegawa-Kishino-Yano distance.
+
+    Uses empirical base frequencies and a single pooled transition proportion S.
+    HKY differs from TN93 in that it uses one combined S (not S1/S2).
+
+    d_HKY = 2*(pi_T*pi_C/(pi_T+pi_C) + pi_A*pi_G/(pi_A+pi_G)) * a
+            - 2*(pi_T*pi_C*(pi_A+pi_G)/(pi_T+pi_C)
+                 + pi_A*pi_G*(pi_T+pi_C)/(pi_A+pi_G)
+                 - (pi_T+pi_C)*(pi_A+pi_G)) * b
+
+    a = -log(1 - S / (2*(pi_T*pi_C/(pi_T+pi_C) + pi_A*pi_G/(pi_A+pi_G)))
+               - ((pi_T*pi_C*(pi_A+pi_G)/(pi_T+pi_C)
+                   + pi_A*pi_G*(pi_T+pi_C)/(pi_A+pi_G)) * V)
+                 / (2*(pi_T*pi_C*(pi_A+pi_G) + pi_A*pi_G*(pi_T+pi_C))))
+    b = -log(1 - V / (2*(pi_T+pi_C)*(pi_A+pi_G)))
+
+    where S = total proportion of transitional differences,
+          V = proportion of transversional differences.
+    (Decoding Genomes, Stadler et al. 2024, eq. 5.71-5.73)
+
+    base_freqs : if provided, these alignment-wide frequencies are used
+                 instead of estimating from seq1/seq2 alone.
+    Returns np.nan if any log argument is non-positive, or if purine or
+    pyrimidine frequencies are zero.
+    """
+    f = base_freqs if base_freqs is not None else _compute_base_freqs([seq1, seq2])
+    pA, pC, pG, pT = f["A"], f["C"], f["G"], f["T"]
+    pR = pA + pG
+    pY = pC + pT
+
+    if pR == 0 or pY == 0:
+        return np.nan
+
+    n = len(seq1)
+    ts = (
+        ((seq1 == "A") & (seq2 == "G")) | ((seq1 == "G") & (seq2 == "A")) |
+        ((seq1 == "C") & (seq2 == "T")) | ((seq1 == "T") & (seq2 == "C"))
+    )
+    diff = seq1 != seq2
+    S = np.sum(ts) / n
+    V = np.sum(diff & ~ts) / n
+
+    tc_over_y = pT * pC / pY
+    ag_over_r = pA * pG / pR
+    coeff_a   = 2.0 * (tc_over_y + ag_over_r)
+    v_num     = tc_over_y * pR + ag_over_r * pY
+    v_den     = 2.0 * (pT * pC * pR + pA * pG * pY)
+    if v_den == 0:
+        return np.nan
+    coeff_b = 2.0 * (pT * pC * pR / pY + pA * pG * pY / pR - pY * pR)
+
+    arg_a = 1.0 - S / coeff_a - (v_num * V) / v_den
+    arg_b = 1.0 - V / (2.0 * pR * pY)
+    if arg_a <= 0 or arg_b <= 0:
+        return np.nan
+
+    return coeff_a * (-np.log(arg_a)) - coeff_b * (-np.log(arg_b))
+
+
+def dist_tn93(seq1, seq2, base_freqs=None):
+    """Tamura-Nei 1993 distance.
+
+    Extends HKY by using separate transition proportions for pyrimidines
+    (S1: C<->T) and purines (S2: A<->G), each with their own rate parameter.
+
+    d_TN93 = (2*pi_T*pi_C / (pi_T+pi_C)) * (a1 - (pi_A+pi_G)*b)
+           + (2*pi_A*pi_G / (pi_A+pi_G)) * (a2 - (pi_T+pi_C)*b)
+           + 2*(pi_T+pi_C)*(pi_A+pi_G)*b
+
+    a1 = -log(1 - (pi_T+pi_C)*S1 / (2*pi_T*pi_C) - V / (2*(pi_T+pi_C)))
+    a2 = -log(1 - (pi_A+pi_G)*S2 / (2*pi_A*pi_G) - V / (2*(pi_A+pi_G)))
+    b  = -log(1 - V / (2*(pi_T+pi_C)*(pi_A+pi_G)))
+
+    where:
+      S1 = proportion of sites with C<->T differences  (pyrimidine transitions)
+      S2 = proportion of sites with A<->G differences  (purine transitions)
+      V  = proportion of sites with transversional differences
+    (Decoding Genomes, Stadler et al. 2024, eq. 5.74-5.77)
+
+    base_freqs : if provided, these alignment-wide frequencies are used
+                 instead of estimating from seq1/seq2 alone.
+    Returns np.nan if any log argument is non-positive, or if a frequency
+    product needed in a denominator is zero.
+    """
+    f = base_freqs if base_freqs is not None else _compute_base_freqs([seq1, seq2])
+    pA, pC, pG, pT = f["A"], f["C"], f["G"], f["T"]
+    pR = pA + pG 
+    pY = pC + pT
+
+    if pR == 0 or pY == 0 or pA * pG == 0 or pC * pT == 0:
+        return np.nan
+
+    n = len(seq1)
+    S1 = np.sum(
+        ((seq1 == "C") & (seq2 == "T")) | ((seq1 == "T") & (seq2 == "C"))
+    ) / n
+    S2 = np.sum(
+        ((seq1 == "A") & (seq2 == "G")) | ((seq1 == "G") & (seq2 == "A"))
+    ) / n
+    ts = (
+        ((seq1 == "C") & (seq2 == "T")) | ((seq1 == "T") & (seq2 == "C")) |
+        ((seq1 == "A") & (seq2 == "G")) | ((seq1 == "G") & (seq2 == "A"))
+    )
+    V = np.sum((seq1 != seq2) & ~ts) / n
+
+    arg_a1 = 1.0 - (pY * S1) / (2.0 * pT * pC) - V / (2.0 * pY)
+    arg_a2 = 1.0 - (pR * S2) / (2.0 * pA * pG) - V / (2.0 * pR)
+    arg_b  = 1.0 - V / (2.0 * pY * pR)
+    if arg_a1 <= 0 or arg_a2 <= 0 or arg_b <= 0:
+        return np.nan
+
+    a1 = -np.log(arg_a1)
+    a2 = -np.log(arg_a2)
+    b  = -np.log(arg_b)
+
+    return (
+        (2.0 * pT * pC / pY) * (a1 - pR * b) +
+        (2.0 * pA * pG / pR) * (a2 - pY * b) +
+        2.0 * pY * pR * b
+    )
+
+
+
+# Map model name -> distance function
+DISTANCE_MODELS = {
+    "pdist": dist_pdist,
+    "jc69":  dist_jc69,
+    "k80":   dist_k80,
+    "hky":   dist_hky,
+    "tn93":  dist_tn93,
+}
+
+
+
 # Function to calculate pairwise distances between the query sequence and all reference sequences in the alignment (query sequence should be the first sequence in the alignment)
-def calculate_pairwise_distances(alignment, current_step, gaps):
+def calculate_pairwise_distances(alignment, current_step, model="pdist", max_gap_frequency=None, global_base_freqs=None):
+
+    # Full set of unambiguous nucleotides; gaps, Ns, and any other characters
+    # are always stripped for all models.
+    NUCLEOTIDES = {"A", "C", "G", "T"}
 
     # Get query sequence from alignment
     query_seq = np.array(list(alignment[0].seq))
-    query_id = alignment[0].id
-    
+    query_id  = alignment[0].id
+
     # Remove the query sequence from the alignment to get the reference sequences
     reference_sequences = [record for record in alignment if record.id != query_id]
-    
+
+    # ------------------------------------------------------------------
+    # Base frequency estimation for HKY and TN93
+    #
+    # By default, global_base_freqs is pre-computed from the full alignment
+    # in main() and passed in here, giving stable estimates consistent with
+    # MEGA. If --local-freqs is set, global_base_freqs is None and frequencies
+    # are estimated per window from all sequences in that window instead.
+    # ------------------------------------------------------------------
+    alignment_base_freqs = None
+    if model in ("hky", "tn93"):
+        if global_base_freqs is not None:
+            alignment_base_freqs = global_base_freqs
+        else:
+            all_valid_seqs = []
+            for record in alignment:
+                seq = np.array(list(record.seq))
+                all_valid_seqs.append(seq[np.isin(seq, list(NUCLEOTIDES))])
+            if all_valid_seqs:
+                alignment_base_freqs = _compute_base_freqs(all_valid_seqs)
+
     # Intialize results list
     results = []
-    
+
     for record in reference_sequences:
         reference_seq = np.array(list(record.seq))
+        window_len = len(reference_seq)
 
-        if gaps == 0:
-            # Mask all positions where either of the two sequences has a gap or an N
-            valid_positions = (reference_seq != "-") & (reference_seq != "N") & (reference_seq != "n") & (query_seq != "-") & (query_seq != "N") & (query_seq != "n")
-        
-        elif gaps == 1:
-            # Mask all positions where either of the two sequences has an N
-            valid_positions = (reference_seq != "N") & (reference_seq != "n") & (query_seq != "N") & (query_seq != "n")
+        # ------------------------------------------------------------------
+        # Step 1 – strip any position where either sequence is not an
+        # unambiguous nucleotide (gaps, Ns, or any other character).
+        # This rule is applied consistently for all distance models.
+        # ------------------------------------------------------------------
+        valid_positions = (
+            np.isin(query_seq, list(NUCLEOTIDES)) &
+            np.isin(reference_seq, list(NUCLEOTIDES))
+        )
 
-        elif gaps == 2:
-            # Mask all positions where both sequences have a gap or either sequence has an N
-            valid_positions = ~((reference_seq == "-") & (query_seq == "-")) & (reference_seq != "N") & (reference_seq != "n") & (query_seq != "N") & (query_seq != "n")
+        # ------------------------------------------------------------------
+        # Step 2 – apply the gap-frequency threshold
+        # ------------------------------------------------------------------
+        seq_len_valid  = int(np.sum(valid_positions))
+        proportion_valid = seq_len_valid / window_len
+        gap_frequency  = 1.0 - proportion_valid
 
-        else:
-            raise ValueError("Please provide a valid option for --gaps: 0, 1, or 2 (check --help for more detailed information on the options).")
-
-        # Subset the sequences to only valid positions
-        reference_valid = reference_seq[valid_positions]
-        query_valid = query_seq[valid_positions]
-
-        # Update the sequence length
-        seq_len_valid = len(reference_valid)
-
-        # Calculate the proportion of valid positions
-        proportion_valid = seq_len_valid / len(reference_seq)
-        if proportion_valid < 0.1:
-            # If less than 10% of positions are valid, skip this comparison
-            print(f"        └── Skipping comparison between {query_id} and {record.id} at step {current_step} due to insufficient valid positions ({proportion_valid*100:.2f}% valid; likely caused by gaps).")
+        # Skip the window if the gap frequency exceeds the threshold
+        if gap_frequency > max_gap_frequency:
+            print(f"        └── Skipping {query_id} vs {record.id} at step {current_step}: "
+                  f"gap frequency {gap_frequency*100:.1f}% exceeds --max-gap-frequency "
+                  f"{max_gap_frequency*100:.1f}%.")
             continue
 
-        # Calculate the number of differing positions
-        nd = np.sum(query_valid != reference_valid)
-        
-        # Calculate the p-distance / Hamming distance
-        dist = round((nd / seq_len_valid), 4)  # Round to 4 decimal places
-        similarity = 1 - dist
-        
+        # ------------------------------------------------------------------
+        # Step 3 – subset to valid positions and compute the distance
+        # ------------------------------------------------------------------
+        reference_valid = reference_seq[valid_positions]
+        query_valid     = query_seq[valid_positions]
+
+        # Look up the requested distance function
+        dist_fn = DISTANCE_MODELS.get(model, dist_pdist)
+
+        # Pass alignment-wide base frequencies to models that use them (HKY, TN93).
+        # For all other models the argument is accepted but ignored.
+        dist = dist_fn(query_valid, reference_valid, base_freqs=alignment_base_freqs)
+
+        # If the distance formula is undefined for this window (e.g. log argument
+        # <= 0 due to saturation), record NaN for both distance and similarity.
+        # Matplotlib will leave a gap at this position in the plot, and the CSV
+        # will contain NaN so the user can identify which windows were affected.
+        if dist is None or np.isnan(dist) or dist < 0:
+            print(f"        └── [WARN] {model.upper()} distance undefined for "
+                  f"{query_id} vs {record.id} at step {current_step} "
+                  f"(window will appear as a gap in the plot).")
+            dist       = np.nan
+            similarity = np.nan
+        else:
+            dist       = round(float(dist), 4)
+            similarity = max(0.0, 1 - dist)
+
         # Append the result as a tuple to the results list
         results.append((query_id, record.id, current_step, dist, similarity, proportion_valid))
-    
+
     return results
+
 
 # Function to assign colors to the results dataframe based on metadata and/or colors mapping
 def assign_colors(results_df, metadata=None, metadata_id_col=None, metadata_genotype_col=None, colors=None, metadata_mode="both"):
@@ -288,7 +600,7 @@ def assign_colors(results_df, metadata=None, metadata_id_col=None, metadata_geno
 
 
 # Function to generate and save the SimPlots
-def plot_simplot(results_df, outdir, outformat, query_genotype=None, windowsize=None, stepsize=None, axes_width_in=14.0, fig_height_in=5.0):
+def plot_simplot(results_df, outdir, outformat, query_genotype=None, windowsize=None, stepsize=None, axes_width_in=14.0, fig_height_in=5.0, model="pdist"):
 
     # Base margins and paddings (in inches)
     base_left_margin_in = 0.6
@@ -415,18 +727,18 @@ def plot_simplot(results_df, outdir, outformat, query_genotype=None, windowsize=
         frameon=False,
     )
 
-    # Plot parameter choices in the bottom left corner of the plot (window size, step size)
+    # Plot parameter choices in the bottom left corner of the plot (window size, step size, distance model)
     if windowsize and stepsize:
-        ax.text(0.01, -0.15, f"Window size: {windowsize} | Step size: {stepsize}", transform=ax.transAxes, fontsize=12, va="top", ha="left")
+        ax.text(0.01, -0.15, f"Window size: {windowsize} | Step size: {stepsize} | Distance model: {model.upper()}", transform=ax.transAxes, fontsize=12, va="top", ha="left")
 
     # Set fontsize of tick labels
     ax.tick_params(axis="both", which="major", labelsize=16)
-    y_min = results_df["similarity"].min() - 0.02
+    y_min = np.nanmin(results_df["similarity"]) - 0.02
     ax.set_ylim(y_min, 1.02)
 
     # Clean file-safe query name
     query_seq_fname = query_seq.replace(" ", "_").replace("(", "").replace(")", "").replace("-", "")
-    output_fname = f"{outdir}/{query_seq_fname}_simplot.{outformat}"
+    output_fname = f"{outdir}/{query_seq_fname}_{model}_simplot.{outformat}"
 
     # Save using the current figure size (which accounts for legend)
     plt.savefig(output_fname, dpi=fig.dpi, bbox_inches="tight")
@@ -551,7 +863,20 @@ def main():
                 missing_refs = [rid for rid in ref_ids if rid not in metadata[args.metadata_id_col].values]
                 if len(missing_refs) > 0:
                     print(f"[WARN] The following reference IDs are missing from the metadata file: {', '.join(missing_refs)}")
-        
+
+        # Estimate base frequencies from the full alignment once, before the per-query
+        # loop. The pool of sequences is the same for every query (all queries +
+        # all references), so there is no reason to recompute this per query.
+        # Ignored for pdist, jc69, and k80, which do not use base frequencies.
+        global_base_freqs = None
+        if args.distance_model in ("hky", "tn93") and not args.local_freqs:
+            global_base_freqs = _freqs_from_records(query_sequences + reference_sequences)
+            print(f"[INFO] Full-alignment base frequencies: "
+                  f"A={global_base_freqs['A']:.4f}, C={global_base_freqs['C']:.4f}, "
+                  f"G={global_base_freqs['G']:.4f}, T={global_base_freqs['T']:.4f}")
+        elif args.distance_model in ("hky", "tn93") and args.local_freqs:
+            print(f"[INFO] --local-freqs specified: base frequencies will be estimated per window from the sequences in each window.")
+
         # Loop through each sequence in the query alignment
         for query_record in query_sequences:
             query_id = query_record.id
@@ -559,7 +884,7 @@ def main():
             
             # Create an alignment with the query sequence as the first sequence, followed by all reference sequences
             final_alignment = [query_record] + reference_sequences
-            
+
             # Split the combined alignment into windows
             print(f"    └── Splitting alignment into windows (window size: {args.windowsize}, step size: {args.stepsize})")
             windows = split_alignment(final_alignment, args.windowsize, args.stepsize)
@@ -570,7 +895,7 @@ def main():
             # Calculate pairwise distances for each window
             print(f"    └── Calculating pairwise distances for each window")
             for step, aln in windows.items():
-                window_results = calculate_pairwise_distances(alignment=aln, current_step=step, gaps=args.gaps)
+                window_results = calculate_pairwise_distances(alignment=aln, current_step=step, model=args.distance_model, max_gap_frequency=args.max_gap_frequency, global_base_freqs=global_base_freqs)
                 final_results.extend(window_results)
 
             # Convert the list of results to a dataframe
@@ -578,7 +903,7 @@ def main():
             
             # Save the results as a CSV file if output directory is provided
             if args.outcsv:
-                results_df.to_csv(f"{args.outcsv}/{query_id}_similarity_results.csv", index=False)
+                results_df.to_csv(f"{args.outcsv}/{query_id}_{args.distance_model}_similarity_results.csv", index=False)
             
             # Assign colors to the results dataframe
             print(f"    └── Assigning colors for plotting")
@@ -597,7 +922,7 @@ def main():
                 
             # Plot the SimPlot
             print(f"    └── Creating SimPlot")
-            plot_simplot(results_df, args.outplots, args.outformat, query_genotype, args.windowsize, args.stepsize, axes_width_in=args.width, fig_height_in=args.height)
+            plot_simplot(results_df, args.outplots, args.outformat, query_genotype, args.windowsize, args.stepsize, axes_width_in=args.width, fig_height_in=args.height, model=args.distance_model)
 
             print(f"[INFO] Finished processing query sequence: {query_id}\n============================================================")
 
@@ -640,6 +965,18 @@ def main():
             # Reference set = all sequences that were not requested as queries (exclude all other query IDs)
             reference_pool = lambda qs: [record for record in query_sequences if record.id not in query_ids]
 
+        # Estimate base frequencies from the full alignment once, before the per-query
+        # loop. All sequences are pooled together regardless of which is the current
+        # query, so this is the same for every iteration.
+        # Ignored for pdist, jc69, and k80, which do not use base frequencies.
+        global_base_freqs = None
+        if args.distance_model in ("hky", "tn93") and not args.local_freqs:
+            global_base_freqs = _freqs_from_records(query_sequences)
+            print(f"[INFO] Full-alignment base frequencies: "
+                  f"A={global_base_freqs['A']:.4f}, C={global_base_freqs['C']:.4f}, "
+                  f"G={global_base_freqs['G']:.4f}, T={global_base_freqs['T']:.4f}")
+        elif args.distance_model in ("hky", "tn93") and args.local_freqs:
+            print(f"[INFO] --local-freqs specified: base frequencies will be estimated per window from the sequences in each window.")
 
         # Process each requested query ID separately
         for query_id in query_ids:
@@ -661,7 +998,7 @@ def main():
             # Calculate pairwise distances for each window
             print(f"    └── Calculating pairwise distances for each window")
             for step, aln in windows.items():
-                window_results = calculate_pairwise_distances(alignment=aln, current_step=step, gaps=args.gaps)
+                window_results = calculate_pairwise_distances(alignment=aln, current_step=step, model=args.distance_model, max_gap_frequency=args.max_gap_frequency, global_base_freqs=global_base_freqs)
                 final_results.extend(window_results)
 
             # Convert the list of results to a dataframe
@@ -669,7 +1006,7 @@ def main():
             
             # Save the results as a CSV file if output directory is provided
             if args.outcsv:
-                results_df.to_csv(f"{args.outcsv}/{query_id}_similarity_results.csv", index=False)
+                results_df.to_csv(f"{args.outcsv}/{query_id}_{args.distance_model}_similarity_results.csv", index=False)
 
             # Assign colors to the results dataframe
             print(f"    └── Assigning colors for plotting")
@@ -688,7 +1025,7 @@ def main():
 
             # Plot the SimPlot
             print(f"    └── Creating SimPlot")
-            plot_simplot(results_df, args.outplots, args.outformat, query_genotype, args.windowsize, args.stepsize, axes_width_in=args.width, fig_height_in=args.height)
+            plot_simplot(results_df, args.outplots, args.outformat, query_genotype, args.windowsize, args.stepsize, axes_width_in=args.width, fig_height_in=args.height, model=args.distance_model)
 
             print(f"[INFO] Finished processing query sequence: {query_id}\n============================================================")
     

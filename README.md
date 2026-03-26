@@ -13,7 +13,7 @@ If you use this program and wish to cite it, please cite both this repository (s
 Given one or more viral genome sequences in a fasta file, the script:
 1. Aligns the sequences (optional; when an alignment is given as input, this step can be skipped with `--no-align`)
 2. Splits the alignment into overlapping windows of a chosen size.
-3. Calculates the pairwise similarity between a query and other sequences in each window.
+3. Calculates the pairwise distance between a query and other sequences in each window.
 4. Produces:
     a) a plot showing how similarity changes along the genome, and
     b) a CSV table with similarity values (optional).
@@ -23,12 +23,24 @@ Given one or more viral genome sequences in a fasta file, the script:
 
 ## How similarity is calculated
 
-For each sliding window:
-- Count how many positions differ between the query and a reference sequence (Hamming distance).
-- Divide that by the number of valid positions (ignoring gaps and Ns depending on your settings).
-- That gives the p-distance: $p = \text{differences} / \text{valid positions}$.
-- Then $\text{similarity} = 1 - p$.
-That’s what’s plotted along the genome.
+For each sliding window, the distance between the query and each reference sequence is computed from the valid (unambiguous nucleotide) positions in that window. Positions containing gaps or ambiguous characters are excluded. The similarity plotted is `1 − distance`.
+
+Five distance models are currently available (see `--distance-model`):
+
+| Model | Description |
+|-------|-------------|
+| `pdist` | p-distance: raw proportion of differing sites (default) |
+| `jc69` | Jukes-Cantor 1969: single-rate correction for multiple hits |
+| `k80` | Kimura 1980: separate rates for transitions and transversions |
+| `hky` | Hasegawa-Kishino-Yano 1984/85: empirical base frequencies, single transition rate |
+| `tn93` | Tamura-Nei 1993: empirical base frequencies, separate purine/pyrimidine transition rates |
+
+For `hky` and `tn93`, base frequencies are estimated from the full alignment by default. Per-window estimation can be enabled with `--local-freqs`.
+
+If a distance formula is undefined for a window (e.g. due to sequence saturation), that window is shown as a gap in the plot and recorded as `NaN` in the CSV.
+
+Windows are centered such that every plotted point represents exactly `--windowsize` sites. The first center is at position `windowsize // 2` and the last is the final position where a full window still fits within the alignment; edge positions are not covered by truncated windows.
+
 
 ## Requirements and Installation
 Requires Python ≥ 3.9 and the following libraries:
@@ -72,45 +84,48 @@ SimPlots will be generated for Query1 and Query2 in sequences.fasta, using all o
 
 SimPlots will be generated for all sequences in sequences.fasta, using all sequences in references.fasta as references.
 
-Window size, step size, output directories, metadata, colors, etc. can be customized using the arguments listed below.
+Window size, step size, distance model, output directories, metadata, colors, etc. can be customized using the arguments listed below.
 
 ## Arguments
 
 | Flag                             | Description                                                                    |
 | -------------------------------- | ------------------------------------------------------------------------------ |
-| `-s`, `--sequences`              | Path to the main sequence file (.fasta)                                           |
-| `-q`, `--query-id`               | ID of query sequence(s) within the alignment (mutually exclusive with `--reference-alignment`).                                |
-| `-i`, `--include-queries-as-refs`               | If set, treat other --query-id sequences as references for each query (default: excluded).                                |
-| `-r`, `--reference-sequences`    | Path to a separate reference alignment (must be the same nucleotide length; mutually exclusive with `--query-id`).   |
-| `-n`, `--no-align`    | If set, skip MAFFT alignment before similarity plotting. Else, align sequences before plotting using `mafft --auto`.  |
-| `-t`, `--threads`    | Number of threads to use for MAFFT alignment (default: 1).  |
-| `-m`, `--metadata`               | Optional CSV/TSV file with sequence info (mapping accessions to genotypes). If provided, genotype information will be added to the output plots.   |
-| `-mi`, `--metadata-id-col`       | Column name in metadata for sequence IDs (default: `Accession`).                           |
-| `-mg`, `--metadata-genotype-col` | Column name in metadata for genotype info (default: `Genotype`).                           |
+| `-s`, `--sequences`              | Path to the main sequence file (.fasta)                                        |
+| `-q`, `--query-id`               | ID of query sequence(s) within the alignment (mutually exclusive with `-r`).  |
+| `-i`, `--include-queries-as-refs` | If set, treat other `--query-id` sequences as references for each query (default: excluded). |
+| `-r`, `--reference-sequences`    | Path to a separate reference fasta (mutually exclusive with `-q`).            |
+| `-n`, `--no-align`               | If set, skip MAFFT alignment. Input sequences must already be aligned.        |
+| `-t`, `--threads`                | Number of threads for MAFFT alignment (default: 1).                           |
+| `-dm`, `--distance-model`        | Distance model: `pdist` (default), `jc69`, `k80`, `hky`, `tn93`. See above.  |
+| `-lf`, `--local-freqs`           | Estimate base frequencies per window rather than from the full alignment (only affects `hky` and `tn93`). |
+| `-mgf`, `--max-gap-frequency`    | Maximum allowed proportion of gap/ambiguous positions per window (default: 0.1). Windows exceeding this threshold are skipped and shown as gaps in the plot. |
+| `-ws`, `--windowsize`            | Window size in nucleotides (default: 100).                                    |
+| `-ss`, `--stepsize`              | Step size between window centers (default: 50).                               |
+| `-m`, `--metadata`               | Optional CSV/TSV file mapping sequence IDs to genotypes.                      |
+| `-mi`, `--metadata-id-col`       | Column name in metadata for sequence IDs (default: `Accession`).             |
+| `-mg`, `--metadata-genotype-col` | Column name in metadata for genotype info (default: `Genotype`).             |
 | `-mm`, `--metadata-mode`         | Whether metadata applies to `query`, `reference`, or `both` (default: `both`). |
-| `-c`, `--colors`                 | Optional file mapping genotypes to colors (`tsv` or `csv`).                    |
-| `-ws`, `--windowsize`             | Window size (default: 100).                                                    |
-| `-ss`, `--stepsize`               | Step size between windows (default: 50).                                       |
-| `-g`, `--gaps`                   | How to treat gaps: 0 = skip position if one or both sequences have a gap, 1 = mismatch if one has a gap, match if both have a gap, 2 = mismatch if one has a gap, skip position if both have a gap.  |
-| `-f`, `--outformat`              | Output file format for the plots: `png`, `pdf`, `svg`, or `jpg` (default: `png`).                                      |
-| `-ht`, `--height`               | Height of the entire figure in inches (default: 5.0).                             |
-| `-wd`, `--width`               | Width of the plotting axes area in inches (default: 14.0).                             |
-| `-p`, `--outplots`               | Directory for plot outputs (default: `simplots/`).                             |
-| `-o`, `--outcsv`                 | Directory for CSV outputs (optional; if not provided, tables will not be saved).                                          |
-| `-oa`, `--outaln`              | Output file path for alignment in fasta format (optional). If not provided, the alignment will not be saved.                                      |
+| `-c`, `--colors`                 | Optional file mapping genotypes to colors (`tsv` or `csv`).                  |
+| `-f`, `--outformat`              | Output plot format: `png` (default), `pdf`, `svg`, or `jpg`.                 |
+| `-ht`, `--height`                | Figure height in inches (default: 5.0).                                       |
+| `-wd`, `--width`                 | Axes width in inches (default: 14.0).                                         |
+| `-p`, `--outplots`               | Directory for plot outputs (default: `simplots/`).                            |
+| `-o`, `--outcsv`                 | Directory for CSV outputs (optional).                                         |
+| `-oa`, `--outaln`                | Output path for the alignment in fasta format (optional).                     |
 
 
 ## Output
 
 Each run creates:
-- One or multiple similarity plots (`simplots/<query>_simplot.png`)
-- A similarity table (if `--outcsv` is set)
+- One or multiple similarity plots (`simplots/<query>_<model>_simplot.png`)
+- A similarity table (`<query>_<model>_similarity_results.csv`, if `--outcsv` is set)
 - An alignment fasta (if `--outaln` is set)
 
 Plots show:
 - Genome position on the x-axis
-- Similarity (1 − p-distance) on the y-axis
-- One line per reference sequence (colored by genotype if available)
+- Similarity (1 − distance) on the y-axis
+- One line per reference sequence (colored by genotype if metadata is provided)
+- Window size, step size, and distance model shown in the lower left corner
 
 
 ## Examples
@@ -130,7 +145,7 @@ python simplot.py \
 <br>
 
 **With a separate reference alignment** <br>
-Compare all query sequences in query_alignment.fasta to all references in references_alignment.fasta (here again, the sequences in the two fasta files are already aligned, so `--no-align` is used):
+Compare all query sequences in query_alignment.fasta to all references in references_alignment.fasta:
 
 ```
 python simplot.py \
@@ -143,17 +158,21 @@ python simplot.py \
 ```
 <br>
 
-**With metadata and custom colors** <br>
-Providing a metadata.csv/tsv file which maps sequence IDs to genotypes enables annotation of genotypes in the output plots as well as coloring the lines by genotype. Default expected metadata column names are "Accession" and "Genotype", but other column names can be specified using `--metadata-id-col` (`-mi`) and `--metadata-genotype-col` (`-mg`). Custom genotype colors can be used by providing a colors.csv/tsv file which maps genotype names to color codes.
+**With a model-based distance, metadata and custom colors** <br>
+Use the TN93 distance model and annotate sequences by genotype:
 
 ```
 python simplot.py \
     -s demo_data/query_alignment.fasta \
     -r demo_data/reference_alignment.fasta \
+    -dm tn93 \
     -m demo_data/metadata.csv \
     -c demo_data/colors.tsv \
     --no-align
 ```
+<br>
+
+Providing a metadata.csv/tsv file (`-m`) which maps sequence IDs to genotypes enables annotation of genotypes in the output plots as well as coloring the lines by genotype. Default expected metadata column names are "Accession" and "Genotype", but other column names can be specified using `--metadata-id-col` (`-mi`) and `--metadata-genotype-col` (`-mg`). Custom genotype colors can be used by providing a colors.csv/tsv (`-c`) file which maps genotype names to color codes.
 
 Example `metadata.csv`:
 ```
