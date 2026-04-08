@@ -18,7 +18,7 @@ Given one or more viral genome sequences in a fasta file, the script:
     a) a plot showing how similarity changes along the genome, and
     b) a CSV table with similarity values (optional).
 
-![example simplot](simplots/OP137282.1_PV3_simplot.png)
+![example simplot](simplots/OP137282.1_PV3_jc69_simplot.png)
 
 
 ## How similarity is calculated
