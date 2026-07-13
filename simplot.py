@@ -840,6 +840,7 @@ def main():
 
             # Read aligned sequences
             aligned_sequences = list(SeqIO.parse(aligned_fasta, "fasta"))
+            aligned_sequences = normalize_records(aligned_sequences) # Renormalize sequence case after alignment
 
             # Split aligned sequences back into query and reference sequences
             query_ids = set(record.id for record in query_sequences)
@@ -947,6 +948,7 @@ def main():
 
             # Read aligned query sequences
             query_sequences = list(SeqIO.parse(aligned_fasta, "fasta"))
+            query_sequences = normalize_records(query_sequences) # Renormalize sequence case after alignment
 
             print(f"[INFO] Alignment completed.")
             if not args.outaln:
